@@ -37,10 +37,10 @@ A portable, fully off-grid system designed to receive and decode weather satelli
 2. Connect RTL-SDR and Raspberry Pi 4B
 3. Clone repository:
    ```bash
-   git clone https://github.com/username/polar-imaging-cyberdeck.git```
+   git clone https://github.com/username/polar-imaging-cyberdeck.git
 4. Install Python dependencies:
    ```bash
-   pip install -r requirements.txt```
+   pip install -r requirements.txt
 
 ## Usage
 
