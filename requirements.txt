@@ -1,0 +1,9 @@
+skyfield
+geopy
+requests
+urllib3
+numpy
+urwid
+rich
+gpiozero
+smbus2
