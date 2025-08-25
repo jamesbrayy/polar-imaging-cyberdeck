@@ -1,9 +1,12 @@
-from skyfield.api import EarthSatellite, load, Topos, wgs84
-from geopy.distance import geodesic
-from datetime import datetime, timezone, timedelta
-import requests, time, urllib3, numpy as np, urwid, re
+from skyfield.api import EarthSatellite, load, Topos, wgs84  # import key objects for satellite tracking and earth geometry
+from geopy.distance import geodesic  # used for calculating geodesic distances on Earth
+from datetime import datetime, timezone, timedelta  # standard datetime handling
+import requests, time, urllib3, random, re  # requests for HTTP, time for delays, urllib3 for suppressing warnings
+import numpy as np  # numerical operations
+import urwid
 from rich.prompt import Prompt
-from rich.console import Console
+from rich.console import Console  # console is the main rich output object
+
 # Setup
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 console = Console()
