@@ -1,4 +1,4 @@
-# Polar Imaging Cyberdeck (PIC)
+# Polar Imaging Cyberdeck System (PICS)
 
 A portable, fully off-grid system designed to receive and decode weather satellite imagery from polar-orbiting and geostationary satellites via L-band radio. It allows independent operation in remote locations without reliance on mains power or network infrastructure.
 
@@ -53,4 +53,4 @@ A portable, fully off-grid system designed to receive and decode weather satelli
 - The antenna rotator and mount is not strictly necessary as the 3D printed helicone dish can be manually aimed at a satellite for reception during a pass
   - This prevents autonomous reception for non-geostationary satellites
 - If I were to redesign this with no budget restrictions I would be sure to replace the servo motors with stepper motors as they are much more suited to this application
-- Designed for educational and hobbyist research applications and submitted for assessment as my final WACE ATAR Engineering project
+- Designed for educational and hobbyist research applications and submitted for assessment as my final WA ATAR Engineering project
