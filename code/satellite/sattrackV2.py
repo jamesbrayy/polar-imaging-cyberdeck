@@ -1,7 +1,7 @@
 from skyfield.api import EarthSatellite, load, Topos, wgs84  # import key objects for satellite tracking and earth geometry
 from geopy.distance import geodesic  # used for calculating geodesic distances on Earth
 from datetime import datetime, timezone, timedelta  # standard datetime handling
-import requests, time, urllib3, random, re  # requests for HTTP, time for delays, urllib3 for suppressing warnings
+import requests, time, urllib3, re, os  # requests for HTTP, time for delays, urllib3 for suppressing warnings
 import numpy as np  # numerical operations
 import urwid
 from rich.prompt import Prompt
@@ -11,10 +11,9 @@ from rich.console import Console  # console is the main rich output object
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 console = Console()
 tle_url = "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather"
-tle_file = "satellites.txt"
+tle_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "satellites.txt")
 colourlist = ["white", "cyan", "dark_blue", "dark_gray", "blue", "magenta", "red", "yellow"]
-# urwid color palette
-palette = [
+palette = [  # for urwid
     ("black", "black", ""), ("dark_red", "dark red", ""), ("dark_green", "dark green", ""),
     ("brown", "brown", ""), ("dark_blue", "dark blue", ""), ("dark_magenta", "dark magenta", ""),
     ("dark_cyan", "dark cyan", ""), ("dark_gray", "dark gray", ""), ("gray", "light gray", ""),
@@ -53,6 +52,7 @@ ascii_map = [  # this ascii map is composed of braille characters and forms an e
         list("⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿")
 ]
 h, w = len(ascii_map), len(ascii_map[0])
+
 def parse_colours(s):
     result = []
     pos = 0
@@ -64,12 +64,14 @@ def parse_colours(s):
     if pos < len(s):
         result.append(s[pos:])
     return result
+
 def check_connection():
     try:
         requests.get("https://www.google.com", timeout=5, verify=False)
         return True, "[green]✓ Internet connected[/green]"
     except:
         return False, "[bright_red]✗ No internet[/bright_red]"
+
 def fetch_tle_data():
     try:
         r = requests.get(tle_url, timeout=10, verify=False)
@@ -90,6 +92,7 @@ def fetch_tle_data():
         return True, "[green]✓ TLE data updated[/green]"
     except Exception as e:
         return False, f"[bright_red]✗ TLE fetch error: {e}[/bright_red]"
+
 def get_satellites(names):
     try:
         lines = open(tle_file).read().splitlines()
@@ -110,8 +113,10 @@ def get_satellites(names):
             messages.append(f"[bright_yellow]⚠ '{name}' not found[/bright_red]")
     
     return sats[:8], messages
+
 def sigmoid(x):
     return 1 / (1 + np.exp(-x))
+
 def select_best_satellite(satellites, observer, ts):
     now = datetime.now(timezone.utc)
     t_now = ts.utc(now)
@@ -140,10 +145,12 @@ def select_best_satellite(satellites, observer, ts):
             best_score, best_sat = score, sat
     
     return scores, best_sat
+
 def latlon_to_map(lat, lon):
     row = int((90 - lat) / 180 * (h - 1))
     col = int((lon + 180) / 360 * (w - 1))
     return max(0, min(h-1, row)), max(0, min(w-1, col))
+
 def draw_map_frame(positions, satellites, ts, observer_lat, observer_lon):
     frame = [row.copy() for row in ascii_map]
     now = datetime.now(timezone.utc)
@@ -169,6 +176,7 @@ def draw_map_frame(positions, satellites, ts, observer_lat, observer_lon):
         frame[r][c] = f"[{colour}]{i+1}[/{colour}]"
     
     return "\n".join("".join(row) for row in frame)
+
 class SatelliteApp:
     def __init__(self):
         self.loop = None
