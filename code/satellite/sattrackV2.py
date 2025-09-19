@@ -7,13 +7,13 @@ import urwid
 from rich.prompt import Prompt
 from rich.console import Console  # console is the main rich output object
 
-# Setup
+# setup
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 console = Console()
 tle_url = "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather"
 tle_file = "satellites.txt"
 colourlist = ["white", "cyan", "dark_blue", "dark_gray", "blue", "magenta", "red", "yellow"]
-# Urwid color palette
+# urwid color palette
 palette = [
     ("black", "black", ""), ("dark_red", "dark red", ""), ("dark_green", "dark green", ""),
     ("brown", "brown", ""), ("dark_blue", "dark blue", ""), ("dark_magenta", "dark magenta", ""),
