@@ -1,16 +1,27 @@
 from skyfield.api import EarthSatellite, load, Topos, wgs84
 from geopy.distance import geodesic
 from datetime import datetime, timezone, timedelta
-import requests, time, urllib3, numpy as np, urwid, re
+import requests, time, urllib3, re, os
+import numpy as np
+import urwid
 from rich.prompt import Prompt
 from rich.console import Console
-# Setup
+
+# GPIO imports - wrapped in try/except for development environments
+try:
+    from gpiozero import AngularServo
+    from gpiozero.pins.pigpio import PiGPIOFactory
+    GPIO_AVAILABLE = True
+except ImportError:
+    GPIO_AVAILABLE = False
+    print("Warning: GPIO libraries not available. Servo control will be simulated.")
+
+# setup
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 console = Console()
 tle_url = "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather"
-tle_file = "satellites.txt"
+tle_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "satellites.txt")
 colourlist = ["white", "cyan", "dark_blue", "dark_gray", "blue", "magenta", "red", "yellow"]
-# Urwid color palette
 palette = [
     ("black", "black", ""), ("dark_red", "dark red", ""), ("dark_green", "dark green", ""),
     ("brown", "brown", ""), ("dark_blue", "dark blue", ""), ("dark_magenta", "dark magenta", ""),
@@ -18,9 +29,10 @@ palette = [
     ("red", "light red", ""), ("green", "light green", ""), ("yellow", "yellow", ""),
     ("blue", "light blue", ""), ("magenta", "light magenta", ""), ("cyan", "light cyan", ""),
     ("white", "white", ""), ("border", "dark green", ""), ("button", "white", ""),
-    ("button_focus", "white", "dark green")
+    ("button_focus", "white", "dark green"), ("slider", "default", "default"),
+    ("slider_focus", "white", "dark green")
 ]
-# ASCII world map
+
 ascii_map = [  # this ascii map is composed of braille characters and forms an equirectangular projection of the earth in terminal
         list("⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⢀⣀⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀"),
         list("⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⣠⣄⢠⣤⣤⣶⣾⣿⣿⣿⣿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠛⠂⠀⠀⠀⠀⠀⠀⢶⣶⡶⡶⠆⠀⠀⠀⠀⠐⠒⠀⠒⠒⣒⣀⡀⠀⠀⠀⠀⠀⠲⢶⢶⣤⣄⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀"),
@@ -49,7 +61,303 @@ ascii_map = [  # this ascii map is composed of braille characters and forms an e
         list("⣷⣶⣶⣶⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣾⣾⣶⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿"),
         list("⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿")
 ]
+
 h, w = len(ascii_map), len(ascii_map[0])
+
+def cycle_satellite_page(self, direction):
+    if len(self.satellites) > 5:
+        if direction == 'down':
+            self.current_sat_page += 1
+        elif direction == 'up':
+            self.current_sat_page -= 1
+        
+        total_pages = (len(self.satellites) + 4) // 5
+        self.current_sat_page = self.current_sat_page % total_pages
+    
+def create_auto_tracking_widget(self):
+    """Create the autonomous tracking control section"""
+    # Auto tracking toggle button
+    toggle_text = "DISABLE Auto Track" if self.auto_tracking_enabled else "ENABLE Auto Track"
+    self.auto_toggle_btn = urwid.AttrMap(
+        urwid.Button(toggle_text, on_press=self.toggle_auto_tracking),
+        'button', 'button_focus'
+    )
+    
+    # Status displays
+    self.auto_status_text = urwid.Text("Auto Tracking: DISABLED", align='center')
+    self.selected_sat_text = urwid.Text("Target: None", align='center')
+    self.position_text = urwid.Text("Az: 0.0° | El: 0.0°", align='center')
+    
+    # Satellite selection buttons
+    sat_buttons = []
+    for i, sat in enumerate(self.satellites):
+        btn_text = f"{i+1}. {sat.name[:20]}"  # Truncate long names
+        btn = urwid.AttrMap(
+            urwid.Button(btn_text, on_press=self.select_satellite, user_data=i),
+            'button', 'button_focus'
+        )
+        sat_buttons.append(btn)
+    
+    # Create satellite selection listbox
+    if sat_buttons:
+        sat_walker = urwid.SimpleListWalker(sat_buttons)
+        sat_listbox = urwid.BoxAdapter(urwid.ListBox(sat_walker), height=6)
+    else:
+        sat_listbox = urwid.Text("No satellites available", align='center')
+    
+    # Auto tracking control layout
+    auto_pile = urwid.Pile([
+        ('pack', urwid.Text("Autonomous Tracking Control", align='center')),
+        ('pack', urwid.Divider()),
+        ('pack', self.auto_status_text),
+        ('pack', self.selected_sat_text),
+        ('pack', self.position_text),
+        ('pack', urwid.Divider()),
+        ('pack', urwid.Text("Select Target Satellite:", align='center')),
+        ('weight', 1, sat_listbox),
+        ('pack', urwid.Divider()),
+        ('pack', self.auto_toggle_btn),
+    ])
+    
+    return urwid.AttrMap(urwid.LineBox(auto_pile, title="Auto Tracking"), 'border')
+
+def create_auto_tracking_widget(self):
+    """Create the autonomous tracking control section"""
+    # Auto tracking toggle button
+    toggle_text = "DISABLE Auto Track" if self.auto_tracking_enabled else "ENABLE Auto Track"
+    self.auto_toggle_btn = urwid.AttrMap(
+        urwid.Button(toggle_text, on_press=self.toggle_auto_tracking),
+        'button', 'button_focus'
+    )
+    
+    # Status displays
+    self.auto_status_text = urwid.Text("Auto Tracking: DISABLED", align='center')
+    self.selected_sat_text = urwid.Text("Target: None", align='center')
+    self.position_text = urwid.Text("Az: 0.0° | El: 0.0°", align='center')
+    
+    # Satellite selection buttons
+    sat_buttons = []
+    for i, sat in enumerate(self.satellites):
+        btn_text = f"{i+1}. {sat.name[:20]}"  # Truncate long names
+        btn = urwid.AttrMap(
+            urwid.Button(btn_text, on_press=self.select_satellite, user_data=i),
+            'button', 'button_focus'
+        )
+        sat_buttons.append(btn)
+    
+    # Create satellite selection listbox
+    if sat_buttons:
+        sat_walker = urwid.SimpleListWalker(sat_buttons)
+        sat_listbox = urwid.BoxAdapter(urwid.ListBox(sat_walker), height=6)
+    else:
+        sat_listbox = urwid.Text("No satellites available", align='center')
+    
+    # Auto tracking control layout
+    auto_pile = urwid.Pile([
+        ('pack', urwid.Text("Autonomous Tracking Control", align='center')),
+        ('pack', urwid.Divider()),
+        ('pack', self.auto_status_text),
+        ('pack', self.selected_sat_text),
+        ('pack', self.position_text),
+        ('pack', urwid.Divider()),
+        ('pack', urwid.Text("Select Target Satellite:", align='center')),
+        ('weight', 1, sat_listbox),
+        ('pack', urwid.Divider()),
+        ('pack', self.auto_toggle_btn),
+    ])
+    
+    return urwid.AttrMap(urwid.LineBox(auto_pile, title="Auto Tracking"), 'border')
+
+# Servo Control Class
+class ServoController:
+    def __init__(self):
+        self.azimuth_angle = 0
+        self.elevation_angle = 0
+        
+        if GPIO_AVAILABLE:
+            try:
+                self.pigpio_factory = PiGPIOFactory()
+                self.azimuth_servo = AngularServo(
+                    18, 
+                    min_angle=-135, 
+                    max_angle=135, 
+                    min_pulse_width=0.0005, 
+                    max_pulse_width=0.0025, 
+                    pin_factory=self.pigpio_factory
+                )
+                self.elevation_servo = AngularServo(
+                    19, 
+                    min_angle=-90, 
+                    max_angle=90, 
+                    min_pulse_width=0.0005, 
+                    max_pulse_width=0.0025, 
+                    pin_factory=self.pigpio_factory
+                )
+                self.azimuth_servo.angle = 0
+                self.elevation_servo.angle = 0
+                self.hardware_available = True
+            except Exception as e:
+                self.hardware_available = False
+                print(f"Warning: Could not initialize servo hardware: {e}")
+        else:
+            self.hardware_available = False
+    
+    def set_azimuth(self, angle):
+        if -135 <= angle <= 135:
+            self.azimuth_angle = angle
+            if self.hardware_available:
+                try:
+                    self.azimuth_servo.angle = float(angle)
+                except Exception as e:
+                    print(f"Error setting azimuth: {e}")
+            return True
+        return False
+    
+    def set_elevation(self, angle):
+        if -90 <= angle <= 90:
+            self.elevation_angle = angle
+            if self.hardware_available:
+                try:
+                    self.elevation_servo.angle = float(angle)
+                except Exception as e:
+                    print(f"Error setting elevation: {e}")
+            return True
+        return False
+
+# Simple Vertical Slider using Text widgets
+class VerticalSlider(urwid.Pile):
+    def __init__(self, min_val, max_val, initial_val, callback=None, label="", height=12):
+        self.min_val = min_val
+        self.max_val = max_val
+        self.current_val = initial_val
+        self.callback = callback
+        self.label = label
+        self.height = height
+        self._selectable = True
+        
+        # Create the visual elements
+        self.slider_lines = []
+        for i in range(height):
+            line = urwid.Text("", align='center')
+            self.slider_lines.append(line)
+        
+        super().__init__([('pack', line) for line in self.slider_lines])
+        self._update_display()
+    
+    def selectable(self):
+        return True
+    
+    def set_value(self, value):
+        """Set the slider value externally"""
+        if self.min_val <= value <= self.max_val:
+            self.current_val = value
+            self._update_display()
+    
+    def _update_display(self, focus=False):
+        # Calculate slider position (inverted for vertical display)
+        range_size = self.max_val - self.min_val
+        if range_size == 0:
+            progress = 0.5
+        else:
+            progress = (self.current_val - self.min_val) / range_size
+        
+        # Calculate position (invert so higher values appear higher)
+        slider_pos = int((self.height - 3) * (1 - progress)) + 1  # +1 for top border
+        slider_pos = max(1, min(self.height - 2, slider_pos))
+        
+        # Update each line with focus-aware coloring
+        width = 9
+        for i, line in enumerate(self.slider_lines):
+            if i == 0:
+                # Top border
+                text = "┌" + "─" * (width - 2) + "┐"
+            elif i == self.height - 1:
+                # Bottom border
+                text = "└" + "─" * (width - 2) + "┘"
+            elif i == slider_pos:
+                # Slider position - only this line gets focus coloring
+                text = "│" + "█" * (width - 2) + "│"
+                if focus:
+                    line.set_text([('slider_focus', text)])
+                    continue
+            else:
+                # Empty track
+                text = "│" + "·" * (width - 2) + "│"
+            
+            # Normal coloring for non-slider lines
+            line.set_text([('slider', text)])
+    
+    def render(self, size, focus=False):
+        # Update display when rendering to apply focus colors
+        self._update_display(focus)
+        return super().render(size, focus)
+    
+    def keypress(self, size, key):
+        old_val = self.current_val
+        if key == 'up':
+            self.current_val = min(self.max_val, self.current_val + 1)
+        elif key == 'down':
+            self.current_val = max(self.min_val, self.current_val - 1)
+        elif key == 'shift up':
+            self.current_val = min(self.max_val, self.current_val + 10)
+        elif key == 'shift down':
+            self.current_val = max(self.min_val, self.current_val - 10)
+        elif key == 'page up':
+            self.current_val = min(self.max_val, self.current_val + 45)
+        elif key == 'page down':
+            self.current_val = max(self.min_val, self.current_val - 45)
+        elif key == 'home':
+            self.current_val = self.max_val
+        elif key == 'end':
+            self.current_val = self.min_val
+        else:
+            return super().keypress(size, key)
+        
+        if self.current_val != old_val:
+            self._update_display()
+            if self.callback:
+                self.callback(self.current_val)
+        return None
+
+# Container widget for slider with label and value
+class LabeledSlider(urwid.Pile):
+    def __init__(self, min_val, max_val, initial_val, callback, title):
+        self.slider = VerticalSlider(min_val, max_val, initial_val, self._on_change, title)
+        self.callback = callback
+        self.value_text = urwid.Text(f"{initial_val}°", align='center')
+        self.title_text = urwid.Text(title, align='center')
+        
+        super().__init__([
+            ('pack', self.title_text),
+            ('pack', urwid.Divider()),
+            ('pack', self.slider),
+            ('pack', urwid.Divider()),
+            ('pack', self.value_text),
+        ])
+        
+        self._selectable = True
+    
+    def set_value(self, value):
+        """Set the slider value externally"""
+        self.slider.set_value(value)
+        self.value_text.set_text(f"{value}°")
+    
+    def get_value(self):
+        """Get the current slider value"""
+        return self.slider.current_val
+    
+    def _on_change(self, value):
+        self.value_text.set_text(f"{value}°")
+        if self.callback:
+            self.callback(value)
+    
+    def selectable(self):
+        return True
+    
+    def keypress(self, size, key):
+        # Pass keys directly to the slider
+        return self.slider.keypress(size, key)
+
 def parse_colours(s):
     result = []
     pos = 0
@@ -61,12 +369,14 @@ def parse_colours(s):
     if pos < len(s):
         result.append(s[pos:])
     return result
+
 def check_connection():
     try:
         requests.get("https://www.google.com", timeout=5, verify=False)
         return True, "[green]✓ Internet connected[/green]"
     except:
         return False, "[bright_red]✗ No internet[/bright_red]"
+
 def fetch_tle_data():
     try:
         r = requests.get(tle_url, timeout=10, verify=False)
@@ -87,6 +397,7 @@ def fetch_tle_data():
         return True, "[green]✓ TLE data updated[/green]"
     except Exception as e:
         return False, f"[bright_red]✗ TLE fetch error: {e}[/bright_red]"
+
 def get_satellites(names):
     try:
         lines = open(tle_file).read().splitlines()
@@ -107,8 +418,10 @@ def get_satellites(names):
             messages.append(f"[bright_yellow]⚠ '{name}' not found[/bright_red]")
     
     return sats[:8], messages
+
 def sigmoid(x):
     return 1 / (1 + np.exp(-x))
+
 def select_best_satellite(satellites, observer, ts):
     now = datetime.now(timezone.utc)
     t_now = ts.utc(now)
@@ -137,10 +450,12 @@ def select_best_satellite(satellites, observer, ts):
             best_score, best_sat = score, sat
     
     return scores, best_sat
+
 def latlon_to_map(lat, lon):
     row = int((90 - lat) / 180 * (h - 1))
     col = int((lon + 180) / 360 * (w - 1))
     return max(0, min(h-1, row)), max(0, min(w-1, col))
+
 def draw_map_frame(positions, satellites, ts, observer_lat, observer_lon):
     frame = [row.copy() for row in ascii_map]
     now = datetime.now(timezone.utc)
@@ -166,6 +481,7 @@ def draw_map_frame(positions, satellites, ts, observer_lat, observer_lon):
         frame[r][c] = f"[{colour}]{i+1}[/{colour}]"
     
     return "\n".join("".join(row) for row in frame)
+
 class SatelliteApp:
     def __init__(self):
         self.loop = None
@@ -174,8 +490,16 @@ class SatelliteApp:
         self.ts = None
         self.running = False
         self.metrics_row_offset = 0
-        self.current_mode = "satellite_tracking"  # "satellite_tracking" or "servo_control"
-        self.current_sat_page = 0  # For cycling through satellite pages
+        self.current_mode = "satellite_tracking"
+        self.current_sat_page = 0
+        self.servo_controller = ServoController()
+        
+        # Auto-tracking state
+        self.auto_tracking_enabled = False
+        self.selected_satellite_index = 0
+        self.current_az = 0.0
+        self.current_el = 0.0
+        self.auto_tracking_focused = False
     
     def setup_data(self, names, coords):
         self.observer_lat, self.observer_lon = map(float, coords.split())
@@ -198,10 +522,8 @@ class SatelliteApp:
         return " | ".join(parts)
     
     def create_metrics_table(self, sat_data):
-        # Always use the simple, original approach that worked
         boxes = []
         
-        # If more than 5 satellites, show current page of 5
         if len(sat_data) > 4:
             satellites_per_page = 4
             total_pages = (len(sat_data) + satellites_per_page - 1) // satellites_per_page
@@ -211,13 +533,11 @@ class SatelliteApp:
             end_idx = min(start_idx + satellites_per_page, len(sat_data))
             display_data = sat_data[start_idx:end_idx]
             
-            # Store page info for display elsewhere
             self.page_info_text = f"Page {self.current_sat_page + 1} of {total_pages}"
         else:
             display_data = sat_data
             self.page_info_text = None
         
-        # Create boxes using the original working method
         for i, (name, az, el, lat, lon, alt, gc_dist, sl_dist, speed) in enumerate(display_data):
             if len(sat_data) > 4:
                 actual_index = self.current_sat_page * 4 + i
@@ -246,28 +566,196 @@ class SatelliteApp:
         
         return urwid.Columns(boxes, dividechars=1)
     
-    def cycle_satellite_page(self, direction):
-        if len(self.satellites) > 5:
-            if direction == 'down':
-                self.current_sat_page += 1
-            elif direction == 'up':
-                self.current_sat_page -= 1
+    def toggle_auto_tracking(self, button):
+        self.auto_tracking_enabled = not self.auto_tracking_enabled
+        self.update_servo_display()
+    
+    def select_satellite(self, button, sat_index):
+        self.selected_satellite_index = sat_index
+        self.update_servo_display()
+    
+    def update_satellite_position(self):
+        """Calculate current satellite position"""
+        if not self.satellites or not self.observer or not self.ts:
+            return
+        
+        if self.selected_satellite_index >= len(self.satellites):
+            self.selected_satellite_index = 0
+        
+        try:
+            sat = self.satellites[self.selected_satellite_index]
+            now = datetime.now(timezone.utc)
+            t = self.ts.from_datetime(now)
+            diff = sat - self.observer
+            el, az, _ = diff.at(t).altaz()
             
-            # Wrap around
-            total_pages = (len(self.satellites) + 4) // 5  # 5 satellites per page
-            self.current_sat_page = self.current_sat_page % total_pages
+            self.current_az = az.degrees
+            self.current_el = el.degrees
+            
+            # Update servos if auto-tracking is enabled
+            if self.auto_tracking_enabled:
+                # Clamp values to servo ranges
+                servo_az = max(-135, min(135, self.current_az))
+                servo_el = max(-90, min(90, self.current_el))
+                
+                self.servo_controller.set_azimuth(servo_az)
+                self.servo_controller.set_elevation(servo_el)
+                
+                # Update slider displays if they exist
+                if hasattr(self, 'az_slider_widget'):
+                    self.az_slider_widget.set_value(servo_az)
+                if hasattr(self, 'el_slider_widget'):
+                    self.el_slider_widget.set_value(servo_el)
+                    
+        except Exception as e:
+            self.current_az = 0.0
+            self.current_el = 0.0
+    
+    def update_servo_display(self):
+        """Update the servo control display elements"""
+        if hasattr(self, 'auto_status_text'):
+            status = "ENABLED" if self.auto_tracking_enabled else "DISABLED"
+            self.auto_status_text.set_text(f"Auto Tracking: {status}")
+        
+        if hasattr(self, 'selected_sat_text') and self.satellites:
+            if self.selected_satellite_index < len(self.satellites):
+                sat_name = self.satellites[self.selected_satellite_index].name
+                self.selected_sat_text.set_text(f"Target: {sat_name}")
+        
+        if hasattr(self, 'position_text'):
+            self.position_text.set_text(f"Az: {self.current_az:.1f}° | El: {self.current_el:.1f}°")
+    
+    def create_auto_tracking_widget(self):
+        """Create the autonomous tracking control section"""
+        # Auto tracking toggle button
+        toggle_text = "DISABLE Auto Track" if self.auto_tracking_enabled else "ENABLE Auto Track"
+        self.auto_toggle_btn = urwid.AttrMap(
+            urwid.Button(toggle_text, on_press=self.toggle_auto_tracking),
+            'button', 'button_focus'
+        )
+        
+        # Status displays
+        self.auto_status_text = urwid.Text("Auto Tracking: DISABLED", align='center')
+        self.selected_sat_text = urwid.Text("Target: None", align='center')
+        self.position_text = urwid.Text("Az: 0.0° | El: 0.0°", align='center')
+        
+        # Satellite selection buttons
+        sat_buttons = []
+        for i, sat in enumerate(self.satellites):
+            btn_text = f"{i+1}. {sat.name[:20]}"  # Truncate long names
+            btn = urwid.AttrMap(
+                urwid.Button(btn_text, on_press=self.select_satellite, user_data=i),
+                'button', 'button_focus'
+            )
+            sat_buttons.append(btn)
+        
+        # Create satellite selection listbox
+        if sat_buttons:
+            sat_walker = urwid.SimpleListWalker(sat_buttons)
+            sat_listbox = urwid.BoxAdapter(urwid.ListBox(sat_walker), height=6)
+        else:
+            sat_listbox = urwid.Text("No satellites available", align='center')
+        
+        # Auto tracking control layout
+        auto_pile = urwid.Pile([
+            ('pack', urwid.Text("Autonomous Tracking Control", align='center')),
+            ('pack', urwid.Divider()),
+            ('pack', self.auto_status_text),
+            ('pack', self.selected_sat_text),
+            ('pack', self.position_text),
+            ('pack', urwid.Divider()),
+            ('pack', urwid.Text("Select Target Satellite:", align='center')),
+            ('weight', 1, sat_listbox),
+            ('pack', urwid.Divider()),
+            ('pack', self.auto_toggle_btn),
+        ])
+        
+        return urwid.AttrMap(urwid.LineBox(auto_pile, title="Auto Tracking"), 'border')
+    
+    def on_azimuth_change(self, value):
+        self.servo_controller.set_azimuth(value)
+        # Disable auto-tracking when manual control is used
+        if self.auto_tracking_enabled:
+            self.auto_tracking_enabled = False
+            self.update_servo_display()
+    
+    def on_elevation_change(self, value):
+        self.servo_controller.set_elevation(value)
+        # Disable auto-tracking when manual control is used
+        if self.auto_tracking_enabled:
+            self.auto_tracking_enabled = False
+            self.update_servo_display()
+    
     def create_servo_control_widget(self):
-        servo_text = urwid.Text("Servo Control Interface\n\nServo controls would go here...", align='center')
-        return urwid.Filler(servo_text, valign='middle')
+        # Create or recreate labeled vertical sliders with preserved values
+        if not hasattr(self, 'az_slider_widget'):
+            # First time creation
+            self.az_slider_widget = LabeledSlider(
+                -135, 135, self.servo_controller.azimuth_angle, self.on_azimuth_change, 
+                "Azimuth\n(-135° to 135°)"
+            )
+            self.el_slider_widget = LabeledSlider(
+                -90, 90, self.servo_controller.elevation_angle, self.on_elevation_change, 
+                "Elevation\n(-90° to 90°)"
+            )
+        else:
+            # Update existing sliders with current servo values
+            self.az_slider_widget.set_value(self.servo_controller.azimuth_angle)
+            self.el_slider_widget.set_value(self.servo_controller.elevation_angle)
+        
+        # Status text
+        status_text = "Hardware Available" if self.servo_controller.hardware_available else "Simulation Mode"
+        status_widget = urwid.Text(f"Status: {status_text}", align='center')
+        
+        # Instructions
+        instructions = urwid.Text(
+            "Up/Down: ±1°  |  Shift+Up/Down: ±10°\n" +
+            "PageUp/PageDown: ±45°  |  Home/End: Max/Min\n" +
+            "Tab: Switch to Auto Tracking",
+            align='center'
+        )
+        
+        # Manual control section
+        manual_control = urwid.Pile([
+            ('pack', urwid.Text("Manual Servo Control", align='center')),
+            ('pack', urwid.Divider()),
+            ('pack', status_widget),
+            ('pack', urwid.Divider()),
+            ('pack', urwid.Columns([
+                ('weight', 1, self.az_slider_widget),
+                ('weight', 1, self.el_slider_widget),
+            ], dividechars=5)),
+            ('pack', urwid.Divider()),
+            ('pack', instructions),
+        ])
+        
+        manual_box = urwid.AttrMap(urwid.LineBox(manual_control, title="Manual Control"), 'border')
+        
+        # Create auto tracking section
+        auto_tracking_box = self.create_auto_tracking_widget()
+        
+        # Create main servo control layout
+        main_pile = urwid.Pile([
+            ('weight', 1, manual_box),
+            ('pack', urwid.Divider()),
+            ('weight', 1, auto_tracking_box),
+        ])
+        
+        # Create focusable wrapper
+        self.servo_focus_walker = urwid.SimpleListWalker([main_pile])
+        servo_listbox = urwid.ListBox(self.servo_focus_walker)
+        
+        # Update displays
+        self.update_servo_display()
+        
+        return servo_listbox
     
     def switch_mode(self, button, mode):
         self.current_mode = mode
         self.update_main_content()
     
     def update_main_content(self):
-        """Update the main content area based on current mode"""
         if self.current_mode == "satellite_tracking":
-            # Create satellite tracking content
             status_box = urwid.AttrMap(urwid.LineBox(urwid.Padding(self.status_text, align='center')), 'border')
             map_box = urwid.AttrMap(urwid.LineBox(urwid.Padding(self.map_text, align='center'), title="Equirectangular Projection"), 'border')
             metrics_box = urwid.AttrMap(urwid.LineBox(urwid.Padding(self.metrics_placeholder, align='center'), title="Live Telemetry"), 'border')
@@ -280,10 +768,8 @@ class SatelliteApp:
             
             self.info_content = content_pile
         else:
-            # Create servo control content
             self.info_content = self.create_servo_control_widget()
         
-        # Make the content focusable
         self.info_widget = urwid.AttrMap(
             urwid.LineBox(self.info_content, title=f"{'Satellite Tracker' if self.current_mode == 'satellite_tracking' else 'Servo Control'}"), 
             'border'
@@ -291,9 +777,16 @@ class SatelliteApp:
         self.main_content.original_widget = self.info_widget
     
     def update_display(self):
-        if not self.running or not self.satellites or self.current_mode != "satellite_tracking":
-            if self.running and self.current_mode != "satellite_tracking":
-                # Still schedule updates even in servo mode
+        if not self.running:
+            return
+            
+        # Update satellite positions for auto-tracking
+        if self.current_mode == "servo_control":
+            self.update_satellite_position()
+            self.update_servo_display()
+            
+        if not self.satellites or self.current_mode != "satellite_tracking":
+            if self.running:
                 self.loop.set_alarm_in(0.1, lambda loop, data: self.update_display())
             return
         
@@ -316,12 +809,10 @@ class SatelliteApp:
             
             sat_data.append((sat.name, az, el, lat, lon, alt, gc_dist, sl_dist, speed))
         
-        # Update widgets
         status_line = self.create_status_line(scores, best_sat)
         map_display = draw_map_frame(positions, self.satellites, self.ts, self.observer_lat, self.observer_lon)
         metrics = self.create_metrics_table(sat_data)
         
-        # Add page info to status line if cycling
         if hasattr(self, 'page_info_text') and self.page_info_text:
             status_line += f" | {self.page_info_text}"
         
@@ -337,7 +828,6 @@ class SatelliteApp:
         self.map_text = urwid.Text("", align='center')
         self.metrics_placeholder = urwid.WidgetPlaceholder(urwid.SolidFill())
         
-        # Create mode selection buttons
         sat_tracking_btn = urwid.AttrMap(urwid.Button("Satellite Tracking", on_press=self.switch_mode, user_data="satellite_tracking"), 'button', 'button_focus')
         servo_control_btn = urwid.AttrMap(urwid.Button("Servo Control", on_press=self.switch_mode, user_data="servo_control"), 'button', 'button_focus')
         
@@ -348,18 +838,16 @@ class SatelliteApp:
         ]))
         
         options_content = urwid.Pile([
-            self.options_listbox,  # Remove weight specification
+            self.options_listbox,
             ('pack', urwid.Divider()),
             ('pack', urwid.Text("Arrow keys to navigate\nEnter to select\n'q' to quit", align='center'))
         ])
         
         self.options_box = urwid.AttrMap(urwid.LineBox(options_content, title="Menu"), 'border')
         
-        # Create main content placeholder
         self.main_content = urwid.WidgetPlaceholder(urwid.SolidFill())
-        self.update_main_content()  # Initialize with satellite tracking mode
+        self.update_main_content()
         
-        # Create the main columns widget with focus capability
         self.main_columns = urwid.Columns([
             ('weight', 1, self.options_box),
             ('weight', 4, self.main_content),
@@ -372,21 +860,29 @@ class SatelliteApp:
             self.running = False
             raise urwid.ExitMainLoop()
         elif key == 'right':
-            # Move focus to info panel
             if hasattr(self, 'main_columns'):
                 self.main_columns.focus_position = 1
         elif key == 'left':
-            # Move focus back to options panel
             if hasattr(self, 'main_columns'):
                 self.main_columns.focus_position = 0
+        elif key == 'tab' and self.current_mode == "servo_control":
+            # Switch focus between manual controls and auto-tracking
+            if hasattr(self, 'servo_focus_walker'):
+                current_focus = self.servo_focus_walker.focus
+                pile = self.servo_focus_walker[0]  # The main pile widget
+                if hasattr(pile, 'focus_position'):
+                    # Toggle between manual (0) and auto-tracking (2) sections
+                    if pile.focus_position == 0:  # Currently on manual
+                        pile.focus_position = 2  # Switch to auto-tracking
+                    else:  # Currently on auto-tracking
+                        pile.focus_position = 0  # Switch to manual
         elif key in ('up', 'down'):
-            # Handle satellite page cycling when focused on info panel
             if (hasattr(self, 'main_columns') and 
                 self.main_columns.focus_position == 1 and 
                 self.current_mode == "satellite_tracking" and 
                 len(self.satellites) > 5):
                 self.cycle_satellite_page(key)
-                return True  # Indicate we handled the key
+                return True
     
     def run(self, names, coords):
         messages = self.setup_data(names, coords)
@@ -410,6 +906,7 @@ class SatelliteApp:
             self.loop.run()
         except KeyboardInterrupt:
             self.running = False
+
 def get_user_input():
     names = [n.strip() for n in Prompt.ask("Enter satellites (comma-separated)", default="Meteor").split(",") if n.strip()]
     coords = Prompt.ask("Observer lat lon", default="-31.9505 115.8605")
@@ -427,6 +924,7 @@ def get_user_input():
     
     time.sleep(1)
     return names, coords
+
 if __name__ == "__main__":
     names, coords = get_user_input()
     app = SatelliteApp()
