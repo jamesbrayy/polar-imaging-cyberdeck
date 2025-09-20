@@ -29,11 +29,10 @@ palette = [
     ("red", "light red", ""), ("green", "light green", ""), ("yellow", "yellow", ""),
     ("blue", "light blue", ""), ("magenta", "light magenta", ""), ("cyan", "light cyan", ""),
     ("white", "white", ""), ("border", "dark green", ""), ("button", "white", ""),
-    ("button_focus", "white", "dark green"), ("slider", "white", "dark blue"),
-    ("slider_focus", "black", "light cyan")
+    ("button_focus", "white", "dark green"), ("slider", "default", "default"),
+    ("slider_focus", "white", "dark green")
 ]
 
-# ASCII world map (truncated for brevity)
 ascii_map = [  # this ascii map is composed of braille characters and forms an equirectangular projection of the earth in terminal
         list("⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⢀⣀⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀"),
         list("⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⣠⣄⢠⣤⣤⣶⣾⣿⣿⣿⣿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠛⠂⠀⠀⠀⠀⠀⠀⢶⣶⡶⡶⠆⠀⠀⠀⠀⠐⠒⠀⠒⠒⣒⣀⡀⠀⠀⠀⠀⠀⠲⢶⢶⣤⣄⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀"),
@@ -121,40 +120,139 @@ class ServoController:
             return True
         return False
 
-# Simple Vertical Slider using IntEdit
-class VerticalSlider(urwid.IntEdit):
-    def __init__(self, min_val, max_val, initial_val, callback=None, label=""):
+# Simple Vertical Slider using Text widgets
+class VerticalSlider(urwid.Pile):
+    def __init__(self, min_val, max_val, initial_val, callback=None, label="", height=12):
         self.min_val = min_val
         self.max_val = max_val
+        self.current_val = initial_val
         self.callback = callback
         self.label = label
-        super().__init__(caption="", default=initial_val)
-        self.set_edit_text(str(initial_val))
+        self.height = height
+        self._selectable = True
+        
+        # Create the visual elements
+        self.slider_lines = []
+        for i in range(height):
+            line = urwid.Text("", align='center')
+            self.slider_lines.append(line)
+        
+        super().__init__([('pack', line) for line in self.slider_lines])
+        self._update_display()
+    
+    def selectable(self):
+        return True
+    
+    def set_value(self, value):
+        """Set the slider value externally"""
+        if self.min_val <= value <= self.max_val:
+            self.current_val = value
+            self._update_display()
+    
+    def _update_display(self, focus=False):
+        # Calculate slider position (inverted for vertical display)
+        range_size = self.max_val - self.min_val
+        if range_size == 0:
+            progress = 0.5
+        else:
+            progress = (self.current_val - self.min_val) / range_size
+        
+        # Calculate position (invert so higher values appear higher)
+        slider_pos = int((self.height - 3) * (1 - progress)) + 1  # +1 for top border
+        slider_pos = max(1, min(self.height - 2, slider_pos))
+        
+        # Update each line with focus-aware coloring
+        width = 9
+        for i, line in enumerate(self.slider_lines):
+            if i == 0:
+                # Top border
+                text = "┌" + "─" * (width - 2) + "┐"
+            elif i == self.height - 1:
+                # Bottom border
+                text = "└" + "─" * (width - 2) + "┘"
+            elif i == slider_pos:
+                # Slider position - only this line gets focus coloring
+                text = "│" + "█" * (width - 2) + "│"
+                if focus:
+                    line.set_text([('slider_focus', text)])
+                    continue
+            else:
+                # Empty track
+                text = "│" + "·" * (width - 2) + "│"
+            
+            # Normal coloring for non-slider lines
+            line.set_text([('slider', text)])
+    
+    def render(self, size, focus=False):
+        # Update display when rendering to apply focus colors
+        self._update_display(focus)
+        return super().render(size, focus)
     
     def keypress(self, size, key):
-        old_val = self.value()
-        if old_val is None:
-            old_val = 0
-            
+        old_val = self.current_val
         if key == 'up':
-            new_val = min(self.max_val, old_val + 1)
+            self.current_val = min(self.max_val, self.current_val + 1)
         elif key == 'down':
-            new_val = max(self.min_val, old_val - 1)
+            self.current_val = max(self.min_val, self.current_val - 1)
         elif key == 'shift up':
-            new_val = min(self.max_val, old_val + 10)
+            self.current_val = min(self.max_val, self.current_val + 10)
         elif key == 'shift down':
-            new_val = max(self.min_val, old_val - 10)
+            self.current_val = max(self.min_val, self.current_val - 10)
         elif key == 'page up':
-            new_val = min(self.max_val, old_val + 45)
+            self.current_val = min(self.max_val, self.current_val + 45)
         elif key == 'page down':
-            new_val = max(self.min_val, old_val - 45)
+            self.current_val = max(self.min_val, self.current_val - 45)
+        elif key == 'home':
+            self.current_val = self.max_val
+        elif key == 'end':
+            self.current_val = self.min_val
         else:
             return super().keypress(size, key)
         
-        self.set_edit_text(str(new_val))
-        if self.callback and new_val != old_val:
-            self.callback(new_val)
+        if self.current_val != old_val:
+            self._update_display()
+            if self.callback:
+                self.callback(self.current_val)
         return None
+
+# Container widget for slider with label and value
+class LabeledSlider(urwid.Pile):
+    def __init__(self, min_val, max_val, initial_val, callback, title):
+        self.slider = VerticalSlider(min_val, max_val, initial_val, self._on_change, title)
+        self.callback = callback
+        self.value_text = urwid.Text(f"{initial_val}°", align='center')
+        self.title_text = urwid.Text(title, align='center')
+        
+        super().__init__([
+            ('pack', self.title_text),
+            ('pack', urwid.Divider()),
+            ('pack', self.slider),
+            ('pack', urwid.Divider()),
+            ('pack', self.value_text),
+        ])
+        
+        self._selectable = True
+    
+    def set_value(self, value):
+        """Set the slider value externally"""
+        self.slider.set_value(value)
+        self.value_text.set_text(f"{value}°")
+    
+    def get_value(self):
+        """Get the current slider value"""
+        return self.slider.current_val
+    
+    def _on_change(self, value):
+        self.value_text.set_text(f"{value}°")
+        if self.callback:
+            self.callback(value)
+    
+    def selectable(self):
+        return True
+    
+    def keypress(self, size, key):
+        # Pass keys directly to the slider
+        return self.slider.keypress(size, key)
 
 def parse_colours(s):
     result = []
@@ -369,26 +467,26 @@ class SatelliteApp:
     
     def on_azimuth_change(self, value):
         self.servo_controller.set_azimuth(value)
-        self.az_value_text.set_text(f"{value}°")
     
     def on_elevation_change(self, value):
         self.servo_controller.set_elevation(value)
-        self.el_value_text.set_text(f"{value}°")
     
     def create_servo_control_widget(self):
-        # Create vertical sliders using IntEdit with AttrMap for focus highlighting
-        self.az_slider = urwid.AttrMap(
-            VerticalSlider(-135, 135, 0, self.on_azimuth_change, "Azimuth"),
-            'slider', 'slider_focus'
-        )
-        self.el_slider = urwid.AttrMap(
-            VerticalSlider(-90, 90, 0, self.on_elevation_change, "Elevation"),
-            'slider', 'slider_focus'
-        )
-        
-        # Value display texts
-        self.az_value_text = urwid.Text("0°", align='center')
-        self.el_value_text = urwid.Text("0°", align='center')
+        # Create or recreate labeled vertical sliders with preserved values
+        if not hasattr(self, 'az_slider_widget'):
+            # First time creation
+            self.az_slider_widget = LabeledSlider(
+                -135, 135, self.servo_controller.azimuth_angle, self.on_azimuth_change, 
+                "Azimuth\n(-135° to 135°)"
+            )
+            self.el_slider_widget = LabeledSlider(
+                -90, 90, self.servo_controller.elevation_angle, self.on_elevation_change, 
+                "Elevation\n(-90° to 90°)"
+            )
+        else:
+            # Update existing sliders with current servo values
+            self.az_slider_widget.set_value(self.servo_controller.azimuth_angle)
+            self.el_slider_widget.set_value(self.servo_controller.elevation_angle)
         
         # Status text
         status_text = "Hardware Available" if self.servo_controller.hardware_available else "Simulation Mode"
@@ -396,11 +494,9 @@ class SatelliteApp:
         
         # Instructions
         instructions = urwid.Text(
-            "Use Up/Down arrows to adjust\n" +
-            "Shift+Up/Down for larger steps\n" +
-            "PageUp/PageDown for 45° steps\n" +
-            "Tab to switch between controls\n" +
-            "Type values directly and press Enter",
+            "Up/Down: ±1°  |  Shift+Up/Down: ±10°\n" +
+            "PageUp/PageDown: ±45°  |  Home/End: Max/Min\n" +
+            "Click on slider to focus it",
             align='center'
         )
         
@@ -411,21 +507,9 @@ class SatelliteApp:
             status_widget,
             urwid.Divider(),
             urwid.Columns([
-                ('weight', 1, urwid.Pile([
-                    ('pack', urwid.Text("Azimuth (-135° to 135°)", align='center')),
-                    ('pack', urwid.Divider()),
-                    ('pack', self.az_slider),
-                    ('pack', urwid.Divider()),
-                    ('pack', self.az_value_text),
-                ])),
-                ('weight', 1, urwid.Pile([
-                    ('pack', urwid.Text("Elevation (-90° to 90°)", align='center')),
-                    ('pack', urwid.Divider()),
-                    ('pack', self.el_slider),
-                    ('pack', urwid.Divider()),
-                    ('pack', self.el_value_text),
-                ])),
-            ], dividechars=3),
+                ('weight', 1, self.az_slider_widget),
+                ('weight', 1, self.el_slider_widget),
+            ], dividechars=5),
             urwid.Divider(),
             instructions,
         ])
