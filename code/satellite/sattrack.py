@@ -9,8 +9,6 @@ from rich.console import Console
 
 from satdump_interface import satdump_receiver
 satdump = satdump_receiver()
-available = satdump.list_satellites()
-print(available)
 
 try:
     from gpiozero import AngularServo
