@@ -943,7 +943,7 @@ class satelliteapp:
             time.sleep(3)
         
         if not self.satellites:
-            console.print("[bright_red]✗ No satellites loaded[/bright_red]")
+            console.print("[/bright_red]✗ No satellites found[/bright_red]")
             time.sleep(5)
             return
         
