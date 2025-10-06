@@ -113,11 +113,9 @@ class SatellitePreviewButton(urwid.Button):
     
     def keypress(self, size, key):
         if key == 'enter':
-            # Lock in selection
             self.select_callback(self, self.sat_index)
             return None
         else:
-            # Preview on focus change
             if key in ('up', 'down'):
                 self.preview_callback(self.sat_index)
             return super().keypress(size, key)
@@ -133,19 +131,19 @@ def satellite_to_servo_coords(sat_az, sat_el):
     sat_el: 0-90° (0° = horizon, 90° = zenith)
     Returns: (servo_az, servo_el) where servo_az: -135° to 135°, servo_el: -70° to 70° (0° = zenith)
     """
-    # Convert azimuth: 0-360° to -180° to 180°, then clamp to servo range
+    # convert azimuth 0-360° to -180° to 180°
     if sat_az > 180:
         servo_az = sat_az - 360
     else:
         servo_az = sat_az
     
-    # Clamp azimuth to servo range
+    # map azimuth to servo range
     servo_az = max(-135, min(135, servo_az))
     
-    # Convert elevation: 0-90° (horizon to zenith) to -90° to 90° (nadir to zenith)  
+    # convert elevation: 0-90° to -90° to 90°
     servo_el = sat_el - 90
     
-    # Clamp elevation to safe servo range
+    # map elevation to safe servo range
     servo_el = max(-70, min(70, servo_el))
     
     return servo_az, servo_el
@@ -156,20 +154,19 @@ def servo_to_satellite_coords(servo_az, servo_el):
     servo_el: -90° to 90° (0° = zenith)
     Returns: (sat_az, sat_el) where sat_az: 0-360°, sat_el: 0-90°
     """
-    # Convert azimuth: -135° to 135° to 0-360°
+    # convert azimuth -135° to 135° to 0-360°
     if servo_az < 0:
         sat_az = servo_az + 360
     else:
         sat_az = servo_az
     
-    # Convert elevation: -90° to 90° (nadir to zenith) to 0-90° (horizon to zenith)
+    # convert elevation -90° to 90° to 0-90°
     sat_el = servo_el + 90
     sat_el = max(0, min(90, sat_el))  # Clamp to valid range
     
     return sat_az, sat_el
 
-# Servo Control Class
-class ServoController:
+class servo_controller:
     def __init__(self):
         self.azimuth_angle = 0
         self.elevation_angle = 0
@@ -224,7 +221,6 @@ class ServoController:
             return True
         return False
 
-# Simple Vertical Slider using Text widgets
 class VerticalSlider(urwid.Pile):
     def __init__(self, min_val, max_val, initial_val, callback=None, label="", height=12):
         self.min_val = min_val
@@ -234,8 +230,7 @@ class VerticalSlider(urwid.Pile):
         self.label = label
         self.height = height
         self._selectable = True
-        
-        # Create the visual elements
+
         self.slider_lines = []
         for i in range(height):
             line = urwid.Text("", align='center')
@@ -254,41 +249,32 @@ class VerticalSlider(urwid.Pile):
             self._update_display()
     
     def _update_display(self, focus=False):
-        # Calculate slider position (inverted for vertical display)
         range_size = self.max_val - self.min_val
         if range_size == 0:
             progress = 0.5
         else:
             progress = (self.current_val - self.min_val) / range_size
         
-        # Calculate position (invert so higher values appear higher)
         slider_pos = int((self.height - 3) * (1 - progress)) + 1  # +1 for top border
         slider_pos = max(1, min(self.height - 2, slider_pos))
         
-        # Update each line with focus-aware coloring
         width = 9
         for i, line in enumerate(self.slider_lines):
             if i == 0:
-                # Top border
                 text = "┌" + "─" * (width - 2) + "┐"
             elif i == self.height - 1:
-                # Bottom border
                 text = "└" + "─" * (width - 2) + "┘"
             elif i == slider_pos:
-                # Slider position - only this line gets focus coloring
                 text = "│" + "█" * (width - 2) + "│"
                 if focus:
                     line.set_text([('slider_focus', text)])
                     continue
             else:
-                # Empty track
                 text = "│" + "·" * (width - 2) + "│"
             
-            # Normal coloring for non-slider lines
             line.set_text([('slider', text)])
     
     def render(self, size, focus=False):
-        # Update display when rendering to apply focus colors
         self._update_display(focus)
         return super().render(size, focus)
     
@@ -319,7 +305,6 @@ class VerticalSlider(urwid.Pile):
                 self.callback(self.current_val)
         return None
 
-# Container widget for slider with label and value
 class LabeledSlider(urwid.Pile):
     def __init__(self, min_val, max_val, initial_val, callback, title):
         self.slider = VerticalSlider(min_val, max_val, initial_val, self._on_change, title)
@@ -355,7 +340,6 @@ class LabeledSlider(urwid.Pile):
         return True
     
     def keypress(self, size, key):
-        # Pass keys directly to the slider
         return self.slider.keypress(size, key)
 
 def parse_colours(s):
@@ -457,19 +441,17 @@ def find_next_pass(sat, observer, ts, min_elevation=20):
     """
     now = datetime.now(timezone.utc)
     
-    # Search in 1-minute intervals for the next 24 hours
-    for minutes_ahead in range(0, 1440):  # 24 hours
+    for minutes_ahead in range(0, 1440):
         check_time = now + timedelta(minutes=minutes_ahead)
         t = ts.from_datetime(check_time)
         diff = sat - observer
         el, _, _ = diff.at(t).altaz()
         
         if el.degrees >= min_elevation:
-            # Found a pass, return seconds until it
             seconds_until = minutes_ahead * 60
             return seconds_until
     
-    return None  # No pass found in next 24 hours
+    return None
 
 def latlon_to_map(lat, lon):
     row = int((90 - lat) / 180 * (h - 1))
@@ -509,7 +491,7 @@ class satelliteapp:
         self.metrics_row_offset = 0
         self.current_mode = "satellite_tracking"
         self.current_sat_page = 0
-        self.servo_controller = ServoController()
+        self.servo_controller = servo_controller()
 
         self.auto_tracking_enabled = False
         self.selected_satellite_index = 0
@@ -561,7 +543,6 @@ class satelliteapp:
             else:
                 header = urwid.Text(f"{i+1}. {name}", align='center')
             
-            # Format next pass time
             if next_pass_seconds is not None:
                 if next_pass_seconds < 60:
                     next_pass_str = f"{int(next_pass_seconds)}s"
@@ -729,7 +710,6 @@ class satelliteapp:
         return urwid.AttrMap(urwid.LineBox(auto_pile, title="Auto Tracking"), 'border')
 
     def preview_satellite(self, sat_index):
-        """Preview satellite position when navigating through list"""
         self.current_az, self.current_el = self.preview_satellite_position(sat_index)
         self.update_servo_display()
     
@@ -765,7 +745,7 @@ class satelliteapp:
         instructions = urwid.Text(
             "Up/Down: ±1°  |  Shift+Up/Down: ±10°\n" +
             "PageUp/PageDown: ±45°  |  Home/End: Max/Min\n" +
-            "Tab: Switch to Auto Tracking",
+            "Tab: Switch to Auto",
             align='center'
         )
         
@@ -855,7 +835,6 @@ class satelliteapp:
             rv = diff.at(t).velocity.m_per_s
             speed = (rv[0]**2 + rv[1]**2 + rv[2]**2)**0.5
             
-            # Calculate next pass
             next_pass_seconds = find_next_pass(sat, self.observer, self.ts, min_elevation=20)
             
             sat_data.append((sat.name, az, el, lat, lon, alt, gc_dist, sl_dist, speed, next_pass_seconds))
@@ -930,7 +909,7 @@ class satelliteapp:
                 self.main_columns.focus_position == 1 and 
                 self.current_mode == "satellite_tracking" and 
                 len(self.satellites) > 5):
-                self.cycle_satellite_page(key)  # Fixed: call as self.cycle_satellite_page
+                self.cycle_satellite_page(key)
                 return True
     
     def run(self, names, coords):
@@ -943,7 +922,7 @@ class satelliteapp:
             time.sleep(3)
         
         if not self.satellites:
-            console.print("[/bright_red]✗ No satellites found[/bright_red]")
+            console.print("[bright_red]✗ No satellites found[/bright_red]")
             time.sleep(5)
             return
         
