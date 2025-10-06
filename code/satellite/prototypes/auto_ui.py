@@ -62,16 +62,6 @@ ascii_map = [  # this ascii map is composed of braille characters and forms an e
 ]
 
 h, w = len(ascii_map), len(ascii_map[0])
-
-def cycle_satellite_page(self, direction):
-    if len(self.satellites) > 5:
-        if direction == 'down':
-            self.current_sat_page += 1
-        elif direction == 'up':
-            self.current_sat_page -= 1
-        
-        total_pages = (len(self.satellites) + 4) // 5
-        self.current_sat_page = self.current_sat_page % total_pages
     
 def create_auto_tracking_widget(self):  # auto tracking toggle button
     toggle_text = "DISABLE Auto Track" if self.auto_tracking_enabled else "ENABLE Auto Track"
@@ -461,6 +451,26 @@ def select_best_satellite(satellites, observer, ts):
     
     return scores, best_sat
 
+def find_next_pass(sat, observer, ts, min_elevation=20):
+    """Find the next time a satellite will be above min_elevation degrees
+    Returns time until pass in seconds, or None if no pass found in next 24 hours
+    """
+    now = datetime.now(timezone.utc)
+    
+    # Search in 1-minute intervals for the next 24 hours
+    for minutes_ahead in range(0, 1440):  # 24 hours
+        check_time = now + timedelta(minutes=minutes_ahead)
+        t = ts.from_datetime(check_time)
+        diff = sat - observer
+        el, _, _ = diff.at(t).altaz()
+        
+        if el.degrees >= min_elevation:
+            # Found a pass, return seconds until it
+            seconds_until = minutes_ahead * 60
+            return seconds_until
+    
+    return None  # No pass found in next 24 hours
+
 def latlon_to_map(lat, lon):
     row = int((90 - lat) / 180 * (h - 1))
     col = int((lon + 180) / 360 * (w - 1))
@@ -544,12 +554,27 @@ class satelliteapp:
             display_data = sat_data
             self.page_info_text = None
         
-        for i, (name, az, el, lat, lon, alt, gc_dist, sl_dist, speed) in enumerate(display_data):
+        for i, (name, az, el, lat, lon, alt, gc_dist, sl_dist, speed, next_pass_seconds) in enumerate(display_data):
             if len(sat_data) > 4:
                 actual_index = self.current_sat_page * 4 + i
                 header = urwid.Text(f"{actual_index+1}. {name}", align='center')
             else:
                 header = urwid.Text(f"{i+1}. {name}", align='center')
+            
+            # Format next pass time
+            if next_pass_seconds is not None:
+                if next_pass_seconds < 60:
+                    next_pass_str = f"{int(next_pass_seconds)}s"
+                elif next_pass_seconds < 3600:
+                    minutes = int(next_pass_seconds // 60)
+                    seconds = int(next_pass_seconds % 60)
+                    next_pass_str = f"{minutes}m {seconds}s"
+                else:
+                    hours = int(next_pass_seconds // 3600)
+                    minutes = int((next_pass_seconds % 3600) // 60)
+                    next_pass_str = f"{hours}h {minutes}m"
+            else:
+                next_pass_str = ">24h"
             
             metrics = [
                 ("Azimuth", f"{az.degrees:.1f}°"),
@@ -560,6 +585,7 @@ class satelliteapp:
                 ("GC Distance", f"{gc_dist:.1f} km"),
                 ("SL Distance", f"{sl_dist:.1f} km"),
                 ("Speed", f"{speed:.1f} m/s"),
+                ("Next Pass", next_pass_str),
             ]
             
             rows = [urwid.Columns([
@@ -572,6 +598,16 @@ class satelliteapp:
         
         return urwid.Columns(boxes, dividechars=1)
     
+    def cycle_satellite_page(self, direction):
+        if len(self.satellites) > 5:
+            if direction == 'down':
+                self.current_sat_page += 1
+            elif direction == 'up':
+                self.current_sat_page -= 1
+            
+            total_pages = (len(self.satellites) + 4) // 5
+            self.current_sat_page = self.current_sat_page % total_pages
+
     def toggle_auto_tracking(self, button):
         self.auto_tracking_enabled = not self.auto_tracking_enabled
         self.update_servo_display()
@@ -819,7 +855,10 @@ class satelliteapp:
             rv = diff.at(t).velocity.m_per_s
             speed = (rv[0]**2 + rv[1]**2 + rv[2]**2)**0.5
             
-            sat_data.append((sat.name, az, el, lat, lon, alt, gc_dist, sl_dist, speed))
+            # Calculate next pass
+            next_pass_seconds = find_next_pass(sat, self.observer, self.ts, min_elevation=20)
+            
+            sat_data.append((sat.name, az, el, lat, lon, alt, gc_dist, sl_dist, speed, next_pass_seconds))
         
         status_line = self.create_status_line(scores, best_sat)
         map_display = draw_map_frame(positions, self.satellites, self.ts, self.observer_lat, self.observer_lon)
@@ -877,21 +916,21 @@ class satelliteapp:
         elif key == 'left':
             if hasattr(self, 'main_columns'):
                 self.main_columns.focus_position = 0
-        elif key == 'tab' and self.current_mode == "servo_control":  # Switch focus between manual controls and autotracking
+        elif key == 'tab' and self.current_mode == "servo_control":
             if hasattr(self, 'servo_focus_walker'):
                 current_focus = self.servo_focus_walker.focus
-                pile = self.servo_focus_walker[0]  # the main pile widget
-                if hasattr(pile, 'focus_position'):  # toggle between manual (0) and autotracking (2) sections
-                    if pile.focus_position == 0:  # currently on manual
-                        pile.focus_position = 2  # switch to autotracking
-                    else:  # currently autotracking
-                        pile.focus_position = 0  # switch to manual
+                pile = self.servo_focus_walker[0]
+                if hasattr(pile, 'focus_position'):
+                    if pile.focus_position == 0:
+                        pile.focus_position = 2
+                    else:
+                        pile.focus_position = 0
         elif key in ('up', 'down'):
             if (hasattr(self, 'main_columns') and 
                 self.main_columns.focus_position == 1 and 
                 self.current_mode == "satellite_tracking" and 
                 len(self.satellites) > 5):
-                cycle_satellite_page(key)
+                self.cycle_satellite_page(key)  # Fixed: call as self.cycle_satellite_page
                 return True
     
     def run(self, names, coords):
