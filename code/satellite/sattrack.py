@@ -789,7 +789,6 @@ class satelliteapp:
         self.main_content.original_widget = self.info_widget
 
     def show_loading_screen(self, messages, duration=2.0, title="Loading"):
-        """Show a centered loading/notice screen on black, then return."""
         parts = []
         if title:
             parts.append(f"[white]{title}[/white]")
@@ -888,11 +887,11 @@ class satelliteapp:
             map_display = self._bg_result['map_display']
 
             status_line = self.create_status_line(scores, best_sat)
+            if hasattr(self, 'page_info_text') and self.page_info_text:
+                status_line += f" | {self.page_info_text}"
+
             metrics = self.create_metrics_table(sat_data)
-        
-        if hasattr(self, 'page_info_text') and self.page_info_text:
-            status_line += f" | {self.page_info_text}"
-        
+
             self.status_text.set_text(parse_colours(status_line))
             self.map_text.set_text(parse_colours(map_display))
             self.metrics_placeholder.original_widget = metrics
