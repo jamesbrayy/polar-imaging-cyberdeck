@@ -444,7 +444,48 @@ class satelliteapp:
         self.current_az = 0.0
         self.current_el = 0.0
         self.auto_tracking_focused = False
-    
+
+    def _compute_satellite_frame_bg(self):
+        """Compute scores, telemetry, and map in a background thread.
+        Stores results in self._bg_result to be consumed by the UI thread.
+        """
+        try:
+            if not self.satellites or not self.observer or not self.ts:
+                self._bg_result = None
+                return
+            now = datetime.now(timezone.utc)
+            t = self.ts.from_datetime(now)
+
+            scores, best_sat = select_best_satellite(self.satellites, self.observer, self.ts)
+
+            positions, sat_data = [], []
+            for sat in self.satellites:
+                sp = sat.at(t).subpoint()
+                diff = sat - self.observer
+                el, az, _ = diff.at(t).altaz()
+                lat, lon, alt = sp.latitude.degrees, sp.longitude.degrees, sp.elevation.km
+                positions.append((lat, lon))
+
+                sl_dist = diff.at(t).distance().km
+                gc_dist = geodesic((self.observer.latitude.degrees, self.observer.longitude.degrees), (lat, lon)).km
+                rv = diff.at(t).velocity.m_per_s
+                speed = (rv[0]**2 + rv[1]**2 + rv[2]**2)**0.5
+
+                next_pass_seconds = find_next_pass(sat, self.observer, self.ts, min_elevation=20)
+                sat_data.append((sat.name, az, el, lat, lon, alt, gc_dist, sl_dist, speed, next_pass_seconds))
+
+            map_display = draw_map_frame(positions, self.satellites, self.ts, self.observer_lat, self.observer_lon)
+
+            self._bg_result = {
+                'scores': scores,
+                'best_sat': best_sat,
+                'sat_data': sat_data,
+                'map_display': map_display,
+            }
+            self._last_map_update = time.time()
+        finally:
+            self._bg_computing = False
+
     def setup_data(self, names, coords):
         self.observer_lat, self.observer_lon = map(float, coords.split())
         self.observer = Topos(latitude_degrees=self.observer_lat, longitude_degrees=self.observer_lon)
@@ -831,38 +872,30 @@ class satelliteapp:
             if self.running:
                 self.loop.set_alarm_in(self.update_interval, lambda loop, data: self.update_display())
             return
-        
-        now = datetime.now(timezone.utc)
-        positions, sat_data = [], []
-        scores, best_sat = select_best_satellite(self.satellites, self.observer, self.ts)
-        
-        for sat in self.satellites:
-            t = self.ts.from_datetime(now)
-            sp = sat.at(t).subpoint()
-            diff = sat - self.observer
-            el, az, _ = diff.at(t).altaz()
-            lat, lon, alt = sp.latitude.degrees, sp.longitude.degrees, sp.elevation.km
-            positions.append((lat, lon))
-            
-            sl_dist = diff.at(t).distance().km
-            gc_dist = geodesic((self.observer.latitude.degrees, self.observer.longitude.degrees), (lat, lon)).km
-            rv = diff.at(t).velocity.m_per_s
-            speed = (rv[0]**2 + rv[1]**2 + rv[2]**2)**0.5
-            
-            next_pass_seconds = find_next_pass(sat, self.observer, self.ts, min_elevation=20)
-            
-            sat_data.append((sat.name, az, el, lat, lon, alt, gc_dist, sl_dist, speed, next_pass_seconds))
-        
-        status_line = self.create_status_line(scores, best_sat)
-        map_display = draw_map_frame(positions, self.satellites, self.ts, self.observer_lat, self.observer_lon)
-        metrics = self.create_metrics_table(sat_data)
+
+        # Start background compute if stale/not running
+        now_ts = time.time()
+        if (not self._bg_computing and
+            (self._bg_result is None or (now_ts - self._last_map_update) >= self.map_update_interval)):
+            self._bg_computing = True
+            threading.Thread(target=self._compute_satellite_frame_bg, daemon=True).start()
+
+        # Apply latest cached results if any
+        if self._bg_result is not None:
+            scores = self._bg_result['scores']
+            best_sat = self._bg_result['best_sat']
+            sat_data = self._bg_result['sat_data']
+            map_display = self._bg_result['map_display']
+
+            status_line = self.create_status_line(scores, best_sat)
+            metrics = self.create_metrics_table(sat_data)
         
         if hasattr(self, 'page_info_text') and self.page_info_text:
             status_line += f" | {self.page_info_text}"
         
-        self.status_text.set_text(parse_colours(status_line))
-        self.map_text.set_text(parse_colours(map_display))
-        self.metrics_placeholder.original_widget = metrics
+            self.status_text.set_text(parse_colours(status_line))
+            self.map_text.set_text(parse_colours(map_display))
+            self.metrics_placeholder.original_widget = metrics
         
         if self.running:
             self.loop.set_alarm_in(self.update_interval, lambda loop, data: self.update_display())
