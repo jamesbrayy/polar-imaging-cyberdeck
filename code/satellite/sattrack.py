@@ -899,11 +899,13 @@ class satelliteapp:
     def show_loading_screen(self, messages, duration=2.0, title="Loading"):
         parts = []
         if title:
-            parts.append(f"[white]{title}[/white]")
+            parts.append(f"[green]{title}[/green]")
         if messages:
             parts.extend(messages)
         text = urwid.Text(parse_colours("\n\n".join(parts)), align='center')
+        text = urwid.AttrMap(text, 'green')
         box = urwid.LineBox(urwid.Padding(text, left=2, right=2))
+        box = urwid.AttrMap(box, 'border')
         top = urwid.Padding(urwid.Filler(box, valign='middle'), align='center', width=('relative', 70))
         background = urwid.AttrMap(urwid.SolidFill(' '), 'black')
         overlay = urwid.Overlay(top, background, align='center', width=('relative', 90), valign='middle', height=('relative', 80))
@@ -919,10 +921,6 @@ class satelliteapp:
             pass
 
     def show_loading_task(self, task_fn, title="Working..."):
-        """Show a centered loading screen while running task_fn in a background thread.
-        task_fn should return a list of message strings (with colour markup) to display when done.
-        Returns the messages from task_fn (or an error message on exception).
-        """
         messages_holder = {"done": False, "msgs": [], "err": None}
 
         def worker():
@@ -935,14 +933,14 @@ class satelliteapp:
                 messages_holder["done"] = True
 
         # UI elements
-        header = urwid.Text(parse_colours(f"[white]{title}[/white]"), align='center')
-        spinner = urwid.Text("…", align='center')
+        header = urwid.Text(parse_colours(f"[green]{title}[/green]"), align='center')
+        spinner = urwid.AttrMap(urwid.Text(".", align='center'), 'green')
         body = urwid.Pile([
             ('pack', header),
             ('pack', urwid.Divider()),
             ('pack', spinner),
         ])
-        box = urwid.LineBox(urwid.Padding(body, left=2, right=2))
+        box = urwid.AttrMap(urwid.LineBox(urwid.Padding(body, left=2, right=2)), 'border')
         top = urwid.Padding(urwid.Filler(box, valign='middle'), align='center', width=('relative', 70))
         background = urwid.AttrMap(urwid.SolidFill(' '), 'black')
         overlay = urwid.Overlay(top, background, align='center', width=('relative', 90), valign='middle', height=('relative', 80))
@@ -1075,6 +1073,8 @@ class satelliteapp:
         if not self.satellites:
             self.show_loading_screen(["[bright_red]�o- No satellites found[/bright_red]"], duration=5.0, title="")
             return
+        # Block until the first map/telemetry frame is computed
+        self.show_loading_task(lambda: (self._compute_satellite_frame_bg() or ["[green]Map ready[/green]"]), title="Preparing map")
         self.running = True
         self.loop = urwid.MainLoop(self.create_main_widget(), palette=palette, unhandled_input=self.unhandled_input)
         self.loop.set_alarm_in(self.update_interval, lambda loop, data: self.update_display())
@@ -1190,7 +1190,6 @@ if __name__ == "__main__":
                 ),
                 title="Fetching TLEs"
             )
-            # Briefly show the results so the user can read them
             if msgs:
                 app.show_loading_screen(msgs, duration=2.0, title="TLE/Network Messages")
         else:
