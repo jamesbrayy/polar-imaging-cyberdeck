@@ -1,7 +1,7 @@
 ﻿from skyfield.api import EarthSatellite, load, Topos, wgs84
 from geopy.distance import geodesic
 from datetime import datetime, timezone, timedelta
-import requests, time, urllib3, re, os, threading
+import requests, time, urllib3, re, os, threading, math
 import numpy as np
 import urwid
 from rich.prompt import Prompt
@@ -26,6 +26,8 @@ UPDATE_INTERVAL = float(os.getenv("SATTRACK_UPDATE_INTERVAL", "0.1"))
 # Heavier map/telemetry update cadence separate from UI tick
 MAP_UPDATE_INTERVAL = float(os.getenv("SATTRACK_MAP_UPDATE_INTERVAL", "1.5"))
 MAP_FORECAST_POINTS = int(os.getenv("SATTRACK_MAP_POINTS", "30"))
+# How often to recompute expensive next-pass predictions per satellite (seconds)
+PASS_UPDATE_INTERVAL = float(os.getenv("SATTRACK_PASS_UPDATE_INTERVAL", "45"))
 colourlist = ["white", "cyan", "dark_blue", "dark_gray", "blue", "magenta", "red", "yellow"]
 palette = [
     ("black", "black", ""), ("dark_red", "dark red", ""), ("dark_green", "dark green", ""),
@@ -433,11 +435,13 @@ class satelliteapp:
         self.servo_controller = servo_controller()
         self.update_interval = UPDATE_INTERVAL
         self.map_update_interval = MAP_UPDATE_INTERVAL
+        self.pass_update_interval = PASS_UPDATE_INTERVAL
 
         # Background compute cache/state
         self._bg_computing = False
         self._bg_result = None
         self._last_map_update = 0.0
+        self._next_pass_cache = {}  # sat.name -> (timestamp, seconds)
 
         self.auto_tracking_enabled = False
         self.selected_satellite_index = 0
@@ -459,6 +463,8 @@ class satelliteapp:
             scores, best_sat = select_best_satellite(self.satellites, self.observer, self.ts)
 
             positions, sat_data = [], []
+            obs_lat = self.observer.latitude.degrees
+            obs_lon = self.observer.longitude.degrees
             for sat in self.satellites:
                 sp = sat.at(t).subpoint()
                 diff = sat - self.observer
@@ -467,11 +473,20 @@ class satelliteapp:
                 positions.append((lat, lon))
 
                 sl_dist = diff.at(t).distance().km
-                gc_dist = geodesic((self.observer.latitude.degrees, self.observer.longitude.degrees), (lat, lon)).km
+                # Fast spherical distance (haversine) instead of geopy.geodesic
+                gc_dist = self._haversine_km(obs_lat, obs_lon, lat, lon)
                 rv = diff.at(t).velocity.m_per_s
                 speed = (rv[0]**2 + rv[1]**2 + rv[2]**2)**0.5
 
-                next_pass_seconds = find_next_pass(sat, self.observer, self.ts, min_elevation=20)
+                # Cache next pass computation per satellite to avoid heavy recalculation every tick
+                np_key = sat.name
+                now_ts = time.time()
+                cache_entry = self._next_pass_cache.get(np_key)
+                if cache_entry and (now_ts - cache_entry[0]) < self.pass_update_interval:
+                    next_pass_seconds = cache_entry[1]
+                else:
+                    next_pass_seconds = find_next_pass(sat, self.observer, self.ts, min_elevation=20)
+                    self._next_pass_cache[np_key] = (now_ts, next_pass_seconds)
                 sat_data.append((sat.name, az, el, lat, lon, alt, gc_dist, sl_dist, speed, next_pass_seconds))
 
             map_display = draw_map_frame(positions, self.satellites, self.ts, self.observer_lat, self.observer_lon)
@@ -492,6 +507,16 @@ class satelliteapp:
         self.satellites, messages = get_satellites(names)
         self.ts = load.timescale()
         return messages
+
+    def _haversine_km(self, lat1, lon1, lat2, lon2):
+        """Fast spherical great-circle distance (approximate) in kilometers."""
+        # convert decimal degrees to radians
+        rlat1, rlon1, rlat2, rlon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+        dlat = rlat2 - rlat1
+        dlon = rlon2 - rlon1
+        a = math.sin(dlat/2)**2 + math.cos(rlat1) * math.cos(rlat2) * math.sin(dlon/2)**2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+        return 6371.0 * c
     
     def create_status_line(self, scores, best_sat):
         parts = []
