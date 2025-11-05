@@ -250,11 +250,88 @@ class VerticalSlider(urwid.Pile):
                 self.callback(self.current_val)
         return None
 
+class AsciiVerticalSlider(urwid.Pile):
+    def __init__(self, min_val, max_val, initial_val, callback=None, label="", height=12):
+        self.min_val = min_val
+        self.max_val = max_val
+        self.current_val = initial_val
+        self.callback = callback
+        self.label = label
+        self.height = height
+        self._selectable = True
+
+        self.slider_lines = []
+        for _ in range(height):
+            self.slider_lines.append(urwid.Text("", align='center'))
+
+        super().__init__([('pack', line) for line in self.slider_lines])
+        self._update_display()
+
+    def selectable(self):
+        return True
+
+    def set_value(self, value):
+        if self.min_val <= value <= self.max_val:
+            self.current_val = value
+            self._update_display()
+
+    def _update_display(self, focus=False):
+        rng = self.max_val - self.min_val
+        progress = 0.5 if rng == 0 else (self.current_val - self.min_val) / rng
+        slider_pos = int((self.height - 3) * (1 - progress)) + 1
+        slider_pos = max(1, min(self.height - 2, slider_pos))
+
+        width = 9
+        for i, line in enumerate(self.slider_lines):
+            if i == 0 or i == self.height - 1:
+                text = "+" + "-" * (width - 2) + "+"
+            elif i == slider_pos:
+                inner = width - 2
+                left = (inner - 1) // 2
+                right = inner - left - 1
+                text = "|" + ("-" * left) + "O" + ("-" * right) + "|"
+                if focus:
+                    line.set_text([('slider_focus', text)])
+                    continue
+            else:
+                text = "|" + " " * (width - 2) + "|"
+            line.set_text([('slider', text)])
+
+    def render(self, size, focus=False):
+        self._update_display(focus)
+        return super().render(size, focus)
+
+    def keypress(self, size, key):
+        old_val = self.current_val
+        if key == 'up':
+            self.current_val = min(self.max_val, self.current_val + 1)
+        elif key == 'down':
+            self.current_val = max(self.min_val, self.current_val - 1)
+        elif key == 'shift up':
+            self.current_val = min(self.max_val, self.current_val + 10)
+        elif key == 'shift down':
+            self.current_val = max(self.min_val, self.current_val - 10)
+        elif key == 'page up':
+            self.current_val = min(self.max_val, self.current_val + 45)
+        elif key == 'page down':
+            self.current_val = max(self.min_val, self.current_val - 45)
+        elif key == 'home':
+            self.current_val = self.max_val
+        elif key == 'end':
+            self.current_val = self.min_val
+        else:
+            return super().keypress(size, key)
+        if self.current_val != old_val:
+            self._update_display()
+            if self.callback:
+                self.callback(self.current_val)
+        return None
+
 class LabeledSlider(urwid.Pile):
     def __init__(self, min_val, max_val, initial_val, callback, title):
-        self.slider = VerticalSlider(min_val, max_val, initial_val, self._on_change, title)
+        self.slider = AsciiVerticalSlider(min_val, max_val, initial_val, self._on_change, title)
         self.callback = callback
-        self.value_text = urwid.Text(f"{initial_val}°", align='center')
+        self.value_text = urwid.Text(f"{initial_val} deg", align='center')
         self.title_text = urwid.Text(title, align='center')
         
         super().__init__([
@@ -269,10 +346,10 @@ class LabeledSlider(urwid.Pile):
     
     def set_value(self, value):
         self.slider.set_value(value)
-        self.value_text.set_text(f"{value}°")
+        self.value_text.set_text(f"{value} deg")
     
     def _on_change(self, value):
-        self.value_text.set_text(f"{value}°")
+        self.value_text.set_text(f"{value} deg")
         if self.callback:
             self.callback(value)
     
@@ -681,7 +758,7 @@ class satelliteapp:
                 self.selected_sat_text.set_text(f"Target: {sat_name}")
         
         if hasattr(self, 'position_text'):
-            self.position_text.set_text(f"Az: {self.current_az:.1f}° | El: {self.current_el:.1f}°")
+            self.position_text.set_text(f"Az: {self.current_az:.1f} deg | El: {self.current_el:.1f} deg")
     
     def create_auto_tracking_widget(self):
         # Auto tracking toggle button
@@ -693,7 +770,7 @@ class satelliteapp:
 
         self.auto_status_text = urwid.Text("Auto Tracking: DISABLED", align='center')
         self.selected_sat_text = urwid.Text("Target: None", align='center')
-        self.position_text = urwid.Text("Az: 0.0° | El: 0.0°", align='center')
+        self.position_text = urwid.Text("Az: 0.0 deg | El: 0.0 deg", align='center')
 
         sat_buttons = []
         for i, sat in enumerate(self.satellites):
@@ -743,11 +820,11 @@ class satelliteapp:
         if not hasattr(self, 'az_slider_widget'):
             self.az_slider_widget = LabeledSlider(
                 -135, 135, self.servo_controller.azimuth_angle, self.on_azimuth_change, 
-                "Azimuth\n(-135° to 135°)"
+                "Azimuth\n(-135 deg to 135 deg)"
             )
             self.el_slider_widget = LabeledSlider(
                 -90, 90, self.servo_controller.elevation_angle, self.on_elevation_change, 
-                "Elevation\n(-90° to 90°)"
+                "Elevation\n(-90 deg to 90 deg)"
             )
         else:
             self.az_slider_widget.set_value(self.servo_controller.azimuth_angle)
@@ -757,8 +834,8 @@ class satelliteapp:
         status_widget = urwid.Text(f"Status: {status_text}", align='center')
 
         instructions = urwid.Text(
-            "Up/Down: ±1°  |  Shift+Up/Down: ±10°\n" +
-            "PageUp/PageDown: ±45°  |  Home/End: Max/Min\n" +
+            "Up/Down: ±1 deg  |  Shift+Up/Down: ±10 deg\n" +
+            "PageUp/PageDown: ±45 deg  |  Home/End: Max/Min\n" +
             "Tab: Switch to Auto",
             align='center'
         )
