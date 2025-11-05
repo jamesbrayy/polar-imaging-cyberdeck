@@ -7,8 +7,7 @@ import urwid
 from rich.prompt import Prompt
 from rich.console import Console
 
-from satdump_interface import satdump_receiver
-satdump = satdump_receiver()
+# satdump integration is unused here; removed to reduce dependencies
 
 try:
     from gpiozero import AngularServo
@@ -23,6 +22,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 console = Console()
 tle_url = "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather"
 tle_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "satellites.txt")
+UPDATE_INTERVAL = float(os.getenv("SATTRACK_UPDATE_INTERVAL", "0.1"))
 colourlist = ["white", "cyan", "dark_blue", "dark_gray", "blue", "magenta", "red", "yellow"]
 palette = [
     ("black", "black", ""), ("dark_red", "dark red", ""), ("dark_green", "dark green", ""),
@@ -66,7 +66,7 @@ ascii_map = [  # this ascii map is composed of braille characters and forms an e
 
 h, w = len(ascii_map), len(ascii_map[0])
     
-def create_auto_tracking_widget(self):  # auto tracking toggle button
+def _obsolete_create_auto_tracking_widget(self):  # duplicate (unused)
     toggle_text = "DISABLE Auto Track" if self.auto_tracking_enabled else "ENABLE Auto Track"
     self.auto_toggle_btn = urwid.AttrMap(
         urwid.Button(toggle_text, on_press=self.toggle_auto_tracking),
@@ -151,24 +151,6 @@ def satellite_to_servo_coords(sat_az, sat_el):
     
     return servo_az, servo_el
 
-def servo_to_satellite_coords(servo_az, servo_el):
-    """Convert servo coordinates to satellite coordinates
-    servo_az: -135° to 135°
-    servo_el: -90° to 90° (0° = zenith)
-    Returns: (sat_az, sat_el) where sat_az: 0-360°, sat_el: 0-90°
-    """
-    # convert azimuth -135° to 135° to 0-360°
-    if servo_az < 0:
-        sat_az = servo_az + 360
-    else:
-        sat_az = servo_az
-    
-    # convert elevation -90° to 90° to 0-90°
-    sat_el = servo_el + 90
-    sat_el = max(0, min(90, sat_el))  # Clamp to valid range
-    
-    return sat_az, sat_el
-
 class servo_controller:
     def __init__(self):
         self.azimuth_angle = 0
@@ -198,7 +180,7 @@ class servo_controller:
                 self.hardware_available = True
             except Exception as e:
                 self.hardware_available = False
-                print(f"Warning: Could not initialize servo hardware: {e}")
+                print(f"Warning: Could not initialise servo hardware: {e}")
         else:
             self.hardware_available = False
     
@@ -404,6 +386,12 @@ def get_satellites(names):
         if not found:
             messages.append(f"[bright_yellow]⚠ '{name}' not found[/bright_red]")
     
+    # sanitise color tags for 'not found' messages (fix mismatched closing tag)
+    messages = [
+        m.replace("[/bright_red]", "[/bright_yellow]")
+        if m.startswith("[bright_yellow]") and "not found" in m else m
+        for m in messages
+    ]
     return sats[:8], messages
 
 def sigmoid(x):
@@ -495,6 +483,7 @@ class satelliteapp:
         self.current_mode = "satellite_tracking"
         self.current_sat_page = 0
         self.servo_controller = servo_controller()
+        self.update_interval = UPDATE_INTERVAL
 
         self.auto_tracking_enabled = False
         self.selected_satellite_index = 0
@@ -818,7 +807,7 @@ class satelliteapp:
             
         if not self.satellites or self.current_mode != "satellite_tracking":
             if self.running:
-                self.loop.set_alarm_in(0.1, lambda loop, data: self.update_display())
+                self.loop.set_alarm_in(self.update_interval, lambda loop, data: self.update_display())
             return
         
         now = datetime.now(timezone.utc)
@@ -854,7 +843,7 @@ class satelliteapp:
         self.metrics_placeholder.original_widget = metrics
         
         if self.running:
-            self.loop.set_alarm_in(0.1, lambda loop, data: self.update_display())
+            self.loop.set_alarm_in(self.update_interval, lambda loop, data: self.update_display())
     
     def create_main_widget(self):
         self.status_text = urwid.Text("", align='center')
@@ -931,7 +920,7 @@ class satelliteapp:
         
         self.running = True
         self.loop = urwid.MainLoop(self.create_main_widget(), palette=palette, unhandled_input=self.unhandled_input)
-        self.loop.set_alarm_in(0.1, lambda loop, data: self.update_display())
+        self.loop.set_alarm_in(self.update_interval, lambda loop, data: self.update_display())
         
         try:
             self.loop.run()
