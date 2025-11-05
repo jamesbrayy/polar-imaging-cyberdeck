@@ -215,9 +215,7 @@ class VerticalSlider(urwid.Pile):
                     line.set_text([('slider_focus', text)])
                     continue
             else:
-                text = "â”‚" + "·" * (width - 2) + "â”‚"
-            
-            line.set_text([('slider', text)])
+                line.set_text([('slider', '│' + ' ' * (width - 2) + '│')])
     
     def render(self, size, focus=False):
         self._update_display(focus)
@@ -281,27 +279,26 @@ class AsciiVerticalSlider(urwid.Pile):
         slider_pos = int((self.height - 3) * (1 - progress)) + 1
         slider_pos = max(1, min(self.height - 2, slider_pos))
 
-        width =  nine = 9
-        width = nine
+        width = 11
         for i, line in enumerate(self.slider_lines):
             # Unicode box-drawing borders for a clean, continuous look
             if i == 0:
-                text = "┌" + "─" * (width - 2) + "┐"
-                line.set_text([('slider', text)])
+                line.set_text([('slider', "┌" + "─" * (width - 2) + "┐")])
                 continue
             if i == self.height - 1:
-                text = "└" + "─" * (width - 2) + "┘"
-                line.set_text([('slider', text)])
+                line.set_text([('slider', "└" + "─" * (width - 2) + "┘")])
                 continue
-            elif i == slider_pos:
-                # Solid green indicator row (use background colour via slider_focus)
+            if i == slider_pos:
                 inner = width - 2
-                text = "│" + (" " * inner) + "│"
-                line.set_text([('slider_focus', text)])
+                if focus:
+                    line.set_text([('slider', '│'), ('slider_focus', ' ' * inner), ('slider', '│')])
+                else:
+                    thickness = 5
+                    left = (inner - thickness) // 2
+                    right = inner - thickness - left
+                    line.set_text([('slider', '│' + (' ' * left)), ('slider_focus', ' ' * thickness), ('slider', (' ' * right) + '│')])
                 continue
-            else:
-                text = "│" + " " * (width - 2) + "│"
-                line.set_text([('slider', text)])
+            line.set_text([('slider', '│' + ' ' * (width - 2) + '│')])
 
     def render(self, size, focus=False):
         self._update_display(focus)
@@ -1205,3 +1202,4 @@ if __name__ == "__main__":
 
         app.show_loading_screen(["[bright_cyan]Starting satellite tracker. Press 'q' to quit.[/bright_cyan]"], duration=1.0, title="")
         app.run(names, coords)
+
