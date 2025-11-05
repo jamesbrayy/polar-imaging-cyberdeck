@@ -24,8 +24,10 @@ tle_url = "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather"
 tle_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "satellites.txt")
 UPDATE_INTERVAL = float(os.getenv("SATTRACK_UPDATE_INTERVAL", "0.1"))
 # Heavier map/telemetry update cadence separate from UI tick
-MAP_UPDATE_INTERVAL = float(os.getenv("SATTRACK_MAP_UPDATE_INTERVAL", "1.5"))
-MAP_FORECAST_POINTS = int(os.getenv("SATTRACK_MAP_POINTS", "30"))
+MAP_UPDATE_INTERVAL = float(os.getenv("SATTRACK_MAP_UPDATE_INTERVAL", "1.2"))
+MAP_FORECAST_POINTS = int(os.getenv("SATTRACK_MAP_POINTS", "24"))
+MAP_HORIZON_MIN = float(os.getenv("SATTRACK_MAP_HORIZON_MIN", "12"))
+MAP_MAX_SATS = int(os.getenv("SATTRACK_MAP_MAX_SATS", "4"))
 # How often to recompute expensive next-pass predictions per satellite (seconds)
 PASS_UPDATE_INTERVAL = float(os.getenv("SATTRACK_PASS_UPDATE_INTERVAL", "45"))
 colourlist = ["white", "cyan", "dark_blue", "dark_gray", "blue", "magenta", "red", "yellow"]
@@ -402,9 +404,13 @@ def latlon_to_map(lat, lon):
 def draw_map_frame(positions, satellites, ts, observer_lat, observer_lon):
     frame = [row.copy() for row in ascii_map]
     now = datetime.now(timezone.utc)
-    forecast_times = [ts.utc(now + timedelta(minutes=i/2)) for i in range(60)]
+    # Build a limited list of forecast times to lighten rendering
+    # Spread MAP_FORECAST_POINTS across MAP_HORIZON_MIN minutes
+    steps = max(1, MAP_FORECAST_POINTS)
+    step_min = MAP_HORIZON_MIN / max(1, steps - 1)
+    forecast_times = [ts.utc(now + timedelta(minutes=i * step_min)) for i in range(steps)]
     
-    for i, sat in enumerate(satellites):
+    for i, sat in enumerate(satellites[:MAP_MAX_SATS]):
         colour = colourlist[i % len(colourlist)]
         for t in forecast_times:
             sub = wgs84.subpoint(sat.at(t))
