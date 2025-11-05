@@ -1,4 +1,4 @@
-from skyfield.api import EarthSatellite, load, Topos, wgs84
+﻿from skyfield.api import EarthSatellite, load, Topos, wgs84
 from geopy.distance import geodesic
 from datetime import datetime, timezone, timedelta
 import requests, time, urllib3, re, os
@@ -66,47 +66,6 @@ ascii_map = [  # this ascii map is composed of braille characters and forms an e
 
 h, w = len(ascii_map), len(ascii_map[0])
     
-def _obsolete_create_auto_tracking_widget(self):  # duplicate (unused)
-    toggle_text = "DISABLE Auto Track" if self.auto_tracking_enabled else "ENABLE Auto Track"
-    self.auto_toggle_btn = urwid.AttrMap(
-        urwid.Button(toggle_text, on_press=self.toggle_auto_tracking),
-        'button', 'button_focus'
-    )
-
-    self.auto_status_text = urwid.Text("Auto Tracking: DISABLED", align='center')
-    self.selected_sat_text = urwid.Text("Target: None", align='center')
-    self.position_text = urwid.Text("Az: 0.0° | El: 0.0°", align='center')
-
-    sat_buttons = []
-    for i, sat in enumerate(self.satellites):
-        btn_text = f"{i+1}. {sat.name[:20]}"  # truncate long names
-        btn = urwid.AttrMap(
-            urwid.Button(btn_text, on_press=self.select_satellite, user_data=i),
-            'button', 'button_focus'
-        )
-        sat_buttons.append(btn)
-
-    if sat_buttons:
-        sat_walker = urwid.SimpleListWalker(sat_buttons)
-        sat_listbox = urwid.BoxAdapter(urwid.ListBox(sat_walker), height=6)
-    else:
-        sat_listbox = urwid.Text("No satellites available", align='center')
-
-    auto_pile = urwid.Pile([
-        ('pack', urwid.Text("Autonomous Tracking Control", align='center')),
-        ('pack', urwid.Divider()),
-        ('pack', self.auto_status_text),
-        ('pack', self.selected_sat_text),
-        ('pack', self.position_text),
-        ('pack', urwid.Divider()),
-        ('pack', urwid.Text("Select Target Satellite:", align='center')),
-        ('weight', 1, sat_listbox),
-        ('pack', urwid.Divider()),
-        ('pack', self.auto_toggle_btn),
-    ])
-    
-    return urwid.AttrMap(urwid.LineBox(auto_pile, title="Auto Tracking"), 'border')
-
 class SatellitePreviewButton(urwid.Button):
     def __init__(self, label, preview_callback, select_callback, sat_index):
         super().__init__(label)
@@ -129,12 +88,7 @@ class SatellitePreviewButton(urwid.Button):
         return super().mouse_event(size, event, button, col, row, focus)
 
 def satellite_to_servo_coords(sat_az, sat_el):
-    """Convert satellite coordinates to servo coordinates
-    sat_az: 0-360° (0° = North)
-    sat_el: 0-90° (0° = horizon, 90° = zenith)
-    Returns: (servo_az, servo_el) where servo_az: -135° to 135°, servo_el: -70° to 70° (0° = zenith)
-    """
-    # convert azimuth 0-360° to -180° to 180°
+    # convert azimuth 0-360Â° to -180Â° to 180Â°
     if sat_az > 180:
         servo_az = sat_az - 360
     else:
@@ -143,7 +97,7 @@ def satellite_to_servo_coords(sat_az, sat_el):
     # map azimuth to servo range
     servo_az = max(-135, min(135, servo_az))
     
-    # convert elevation: 0-90° to -90° to 90°
+    # convert elevation: 0-90Â° to -90Â° to 90Â°
     servo_el = sat_el - 90
     
     # map elevation to safe servo range
@@ -228,7 +182,6 @@ class VerticalSlider(urwid.Pile):
         return True
     
     def set_value(self, value):
-        """Set the slider value externally"""
         if self.min_val <= value <= self.max_val:
             self.current_val = value
             self._update_display()
@@ -246,16 +199,16 @@ class VerticalSlider(urwid.Pile):
         width = 9
         for i, line in enumerate(self.slider_lines):
             if i == 0:
-                text = "┌" + "─" * (width - 2) + "┐"
+                text = "â”Œ" + "â”€" * (width - 2) + "â”"
             elif i == self.height - 1:
-                text = "└" + "─" * (width - 2) + "┘"
+                text = "â””" + "â”€" * (width - 2) + "â”˜"
             elif i == slider_pos:
-                text = "│" + "█" * (width - 2) + "│"
+                text = "â”‚" + "â–ˆ" * (width - 2) + "â”‚"
                 if focus:
                     line.set_text([('slider_focus', text)])
                     continue
             else:
-                text = "│" + "·" * (width - 2) + "│"
+                text = "â”‚" + "Â·" * (width - 2) + "â”‚"
             
             line.set_text([('slider', text)])
     
@@ -294,7 +247,7 @@ class LabeledSlider(urwid.Pile):
     def __init__(self, min_val, max_val, initial_val, callback, title):
         self.slider = VerticalSlider(min_val, max_val, initial_val, self._on_change, title)
         self.callback = callback
-        self.value_text = urwid.Text(f"{initial_val}°", align='center')
+        self.value_text = urwid.Text(f"{initial_val}Â°", align='center')
         self.title_text = urwid.Text(title, align='center')
         
         super().__init__([
@@ -308,16 +261,11 @@ class LabeledSlider(urwid.Pile):
         self._selectable = True
     
     def set_value(self, value):
-        """Set the slider value externally"""
         self.slider.set_value(value)
-        self.value_text.set_text(f"{value}°")
-    
-    def get_value(self):
-        """Get the current slider value"""
-        return self.slider.current_val
+        self.value_text.set_text(f"{value}Â°")
     
     def _on_change(self, value):
-        self.value_text.set_text(f"{value}°")
+        self.value_text.set_text(f"{value}Â°")
         if self.callback:
             self.callback(value)
     
@@ -342,9 +290,9 @@ def parse_colours(s):
 def check_connection():
     try:
         requests.get("https://www.google.com", timeout=5, verify=False)
-        return True, "[green]✓ Internet connected[/green]"
+        return True, "[green]âœ“ Internet connected[/green]"
     except:
-        return False, "[bright_red]✗ No internet[/bright_red]"
+        return False, "[bright_red]âœ— No internet[/bright_red]"
 
 def fetch_tle_data():
     try:
@@ -363,15 +311,15 @@ def fetch_tle_data():
         
         with open(tle_file, "w", encoding="utf-8") as f:
             f.write("\n".join(cleaned))
-        return True, "[green]✓ TLE data updated[/green]"
+        return True, "[green]âœ“ TLE data updated[/green]"
     except Exception as e:
-        return False, f"[bright_red]✗ TLE fetch error: {e}[/bright_red]"
+        return False, f"[bright_red]âœ— TLE fetch error: {e}[/bright_red]"
 
 def get_satellites(names):
     try:
         lines = open(tle_file).read().splitlines()
     except FileNotFoundError:
-        return [], ["[bright_red]✗ TLE file not found[/bright_red]"]
+        return [], ["[bright_red]âœ— TLE file not found[/bright_red]"]
     
     sats, used_names, messages = [], set(), []
     
@@ -384,7 +332,7 @@ def get_satellites(names):
                 used_names.add(line_name)
                 found = True
         if not found:
-            messages.append(f"[bright_yellow]⚠ '{name}' not found[/bright_red]")
+            messages.append(f"[bright_yellow]âš  '{name}' not found[/bright_red]")
     
     # sanitise color tags for 'not found' messages (fix mismatched closing tag)
     messages = [
@@ -427,9 +375,6 @@ def select_best_satellite(satellites, observer, ts):
     return scores, best_sat
 
 def find_next_pass(sat, observer, ts, min_elevation=20):
-    """Find the next time a satellite will be above min_elevation degrees
-    Returns time until pass in seconds, or None if no pass found in next 24 hours
-    """
     now = datetime.now(timezone.utc)
     
     for minutes_ahead in range(0, 1440):
@@ -504,7 +449,7 @@ class satelliteapp:
             score = scores.get(sat, 0)
             name = sat.name
             if sat == best_sat and score > 0:
-                parts.append(f"[green]{name} ({score:.1f}) ☆[/green]")
+                parts.append(f"[green]{name} ({score:.1f}) â˜†[/green]")
             elif score > 0:
                 parts.append(f"[dark_green]{name} ({score:.1f})[/dark_green]")
             else:
@@ -550,10 +495,10 @@ class satelliteapp:
                 next_pass_str = ">24h"
             
             metrics = [
-                ("Azimuth", f"{az.degrees:.1f}°"),
-                ("Elevation", f"{el.degrees:.1f}°"),
-                ("Latitude", f"{lat:.3f}°"),
-                ("Longitude", f"{lon:.3f}°"),
+                ("Azimuth", f"{az.degrees:.1f}Â°"),
+                ("Elevation", f"{el.degrees:.1f}Â°"),
+                ("Latitude", f"{lat:.3f}Â°"),
+                ("Longitude", f"{lon:.3f}Â°"),
                 ("Altitude", f"{alt:.1f} km"),
                 ("GC Distance", f"{gc_dist:.1f} km"),
                 ("SL Distance", f"{sl_dist:.1f} km"),
@@ -591,7 +536,6 @@ class satelliteapp:
         self.update_servo_display()
     
     def update_satellite_position(self):
-        """Calculate current satellite position"""
         if not self.satellites or not self.observer or not self.ts:
             return
         
@@ -629,7 +573,6 @@ class satelliteapp:
             self.current_el = 0.0
 
     def preview_satellite_position(self, sat_index):
-        """Calculate satellite position for preview (without tracking)"""
         if not self.satellites or not self.observer or not self.ts:
             return 0.0, 0.0
         
@@ -647,7 +590,6 @@ class satelliteapp:
             return 0.0, 0.0
     
     def update_servo_display(self):
-        """Update the servo control display elements"""
         if hasattr(self, 'auto_status_text'):
             status = "ENABLED" if self.auto_tracking_enabled else "DISABLED"
             self.auto_status_text.set_text(f"Auto Tracking: {status}")
@@ -658,10 +600,9 @@ class satelliteapp:
                 self.selected_sat_text.set_text(f"Target: {sat_name}")
         
         if hasattr(self, 'position_text'):
-            self.position_text.set_text(f"Az: {self.current_az:.1f}° | El: {self.current_el:.1f}°")
+            self.position_text.set_text(f"Az: {self.current_az:.1f}Â° | El: {self.current_el:.1f}Â°")
     
     def create_auto_tracking_widget(self):
-        """Create the autonomous tracking control section"""
         # Auto tracking toggle button
         toggle_text = "DISABLE Auto Track" if self.auto_tracking_enabled else "ENABLE Auto Track"
         self.auto_toggle_btn = urwid.AttrMap(
@@ -671,7 +612,7 @@ class satelliteapp:
 
         self.auto_status_text = urwid.Text("Auto Tracking: DISABLED", align='center')
         self.selected_sat_text = urwid.Text("Target: None", align='center')
-        self.position_text = urwid.Text("Az: 0.0° | El: 0.0°", align='center')
+        self.position_text = urwid.Text("Az: 0.0Â° | El: 0.0Â°", align='center')
 
         sat_buttons = []
         for i, sat in enumerate(self.satellites):
@@ -721,11 +662,11 @@ class satelliteapp:
         if not hasattr(self, 'az_slider_widget'):
             self.az_slider_widget = LabeledSlider(
                 -135, 135, self.servo_controller.azimuth_angle, self.on_azimuth_change, 
-                "Azimuth\n(-135° to 135°)"
+                "Azimuth\n(-135Â° to 135Â°)"
             )
             self.el_slider_widget = LabeledSlider(
                 -90, 90, self.servo_controller.elevation_angle, self.on_elevation_change, 
-                "Elevation\n(-90° to 90°)"
+                "Elevation\n(-90Â° to 90Â°)"
             )
         else:
             self.az_slider_widget.set_value(self.servo_controller.azimuth_angle)
@@ -735,8 +676,8 @@ class satelliteapp:
         status_widget = urwid.Text(f"Status: {status_text}", align='center')
 
         instructions = urwid.Text(
-            "Up/Down: ±1°  |  Shift+Up/Down: ±10°\n" +
-            "PageUp/PageDown: ±45°  |  Home/End: Max/Min\n" +
+            "Up/Down: Â±1Â°  |  Shift+Up/Down: Â±10Â°\n" +
+            "PageUp/PageDown: Â±45Â°  |  Home/End: Max/Min\n" +
             "Tab: Switch to Auto",
             align='center'
         )
@@ -914,7 +855,7 @@ class satelliteapp:
             time.sleep(3)
         
         if not self.satellites:
-            console.print("[bright_red]✗ No satellites found[/bright_red]")
+            console.print("[bright_red]âœ— No satellites found[/bright_red]")
             time.sleep(5)
             return
         
@@ -927,27 +868,93 @@ class satelliteapp:
         except KeyboardInterrupt:
             self.running = False
 
-def get_user_input():
-    names = [n.strip() for n in Prompt.ask("Enter satellites (comma-separated)", default="Meteor").split(",") if n.strip()]
-    coords = Prompt.ask("Observer lat lon", default="-31.9505 115.8605")
-    
-    if Prompt.ask("Fetch fresh TLEs?", default="n", choices=["y", "n"]) == "y":
-        connected, msg = check_connection()
-        console.print(msg)
-        if connected:
-            success, tle_msg = fetch_tle_data()
-            console.print(tle_msg)
+def get_user_input_ui():
+    default_names = "Meteor"
+    default_coords = "-31.9505 115.8605"
+
+    title = urwid.Text("Satellite Tracker Setup", align='center')
+    subtitle = urwid.Text("Enter targets and observer location", align='center')
+
+    names_caption = parse_colours("Satellites (comma-separated) [gray](Meteor)[/gray]: ")
+    coords_caption = parse_colours("Observer lat lon [gray](-31.9505 115.8605)[/gray]: ")
+    names_edit = urwid.Edit(names_caption, "")
+    coords_edit = urwid.Edit(coords_caption, "")
+    fetch_checkbox = urwid.CheckBox("Fetch fresh TLEs", state=False)
+
+    message_text = urwid.Text("", align='center')
+
+    result = {"names": None, "coords": None, "cancel": False}
+
+    def on_quit(button):
+        result["cancel"] = True
+        raise urwid.ExitMainLoop()
+
+    def on_start(button):
+        raw = names_edit.edit_text or ""
+        names = [n.strip() for n in raw.split(",") if n.strip()]
+        if not names:
+            names = [default_names]
+
+        coords_raw = (coords_edit.edit_text or "").strip()
+        if not coords_raw:
+            coords_raw = default_coords
         else:
-            console.print("[bright_yellow]⚠ Using local TLE file[/bright_yellow]")
-    else:
-        console.print("[bright_cyan]ⓘ Using local TLE file[/bright_cyan]")
-    
-    time.sleep(1)
-    return names, coords
+            try:
+                lat_str, lon_str = coords_raw.split()
+                float(lat_str); float(lon_str)
+            except Exception:
+                message_text.set_text(parse_colours("[bright_red]Enter coordinates as 'lat lon' (e.g. -31.95 115.86)[/bright_red]"))
+                return
+
+        msgs = []
+        if fetch_checkbox.get_state():
+            connected, msg = check_connection()
+            msgs.append(msg)
+            if connected:
+                success, tle_msg = fetch_tle_data()
+                msgs.append(tle_msg)
+            else:
+                # Revert to previous yellow message formatting
+                msgs.append('[bright_yellow]Using local TLE file[/bright_yellow]')
+        else:
+            # Revert to previous cyan message formatting
+            msgs.append('[bright_cyan]Using local TLE file[/bright_cyan]')
+
+        message_text.set_text(parse_colours("\n".join(msgs)))
+        result["names"], result["coords"] = names, coords_raw
+        raise urwid.ExitMainLoop()
+
+    start_btn = urwid.AttrMap(urwid.Button("Start", on_press=on_start), 'button', 'button_focus')
+    quit_btn = urwid.AttrMap(urwid.Button("Quit", on_press=on_quit), 'button', 'button_focus')
+
+    form = urwid.Pile([
+        ('pack', title),
+        ('pack', urwid.Divider()),
+        ('pack', subtitle),
+        ('pack', urwid.Divider()),
+        ('pack', names_edit),
+        ('pack', coords_edit),
+        ('pack', urwid.Divider()),
+        ('pack', fetch_checkbox),
+        ('pack', urwid.Divider()),
+        ('pack', urwid.Columns([('weight', 1, start_btn), ('weight', 1, quit_btn)], dividechars=3)),
+        ('pack', urwid.Divider()),
+        ('pack', message_text),
+    ])
+
+    boxed = urwid.AttrMap(urwid.LineBox(form, title="Setup"), 'border')
+    centered = urwid.Filler(urwid.Padding(boxed, align='center', width=('relative', 60)), valign='middle')
+    loop = urwid.MainLoop(centered, palette=palette)
+    loop.run()
+
+    if result["cancel"]:
+        return None, None
+    return result["names"], result["coords"]
 
 if __name__ == "__main__":
-    names, coords = get_user_input()
-    app = satelliteapp()
-    console.print("\nStarting satellite tracker. Press '[bright_cyan]q[/bright_cyan]' to quit.")
-    time.sleep(1)
-    app.run(names, coords)
+    names, coords = get_user_input_ui()
+    if names and coords:
+        app = satelliteapp()
+        console.print("\nStarting satellite tracker. Press '[bright_cyan]q[/bright_cyan]' to quit.")
+        time.sleep(1)
+        app.run(names, coords)
