@@ -281,21 +281,27 @@ class AsciiVerticalSlider(urwid.Pile):
         slider_pos = int((self.height - 3) * (1 - progress)) + 1
         slider_pos = max(1, min(self.height - 2, slider_pos))
 
-        width = 9
+        width =  nine = 9
+        width = nine
         for i, line in enumerate(self.slider_lines):
-            if i == 0 or i == self.height - 1:
-                text = "+" + "-" * (width - 2) + "+"
+            # Unicode box-drawing borders for a clean, continuous look
+            if i == 0:
+                text = "┌" + "─" * (width - 2) + "┐"
+                line.set_text([('slider', text)])
+                continue
+            if i == self.height - 1:
+                text = "└" + "─" * (width - 2) + "┘"
+                line.set_text([('slider', text)])
+                continue
             elif i == slider_pos:
+                # Solid green indicator row (use background colour via slider_focus)
                 inner = width - 2
-                left = (inner - 1) // 2
-                right = inner - left - 1
-                text = "|" + ("-" * left) + "O" + ("-" * right) + "|"
-                if focus:
-                    line.set_text([('slider_focus', text)])
-                    continue
+                text = "│" + (" " * inner) + "│"
+                line.set_text([('slider_focus', text)])
+                continue
             else:
-                text = "|" + " " * (width - 2) + "|"
-            line.set_text([('slider', text)])
+                text = "│" + " " * (width - 2) + "│"
+                line.set_text([('slider', text)])
 
     def render(self, size, focus=False):
         self._update_display(focus)
