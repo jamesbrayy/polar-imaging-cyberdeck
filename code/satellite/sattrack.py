@@ -943,6 +943,22 @@ class satelliteapp:
             self.loop.run()
         except KeyboardInterrupt:
             self.running = False
+        finally:
+            try:
+                if hasattr(self, 'loop') and hasattr(self.loop, 'screen'):
+                    # Ask urwid to clear and restore terminal
+                    self.loop.screen.clear()
+                    self.loop.screen.stop()
+            except Exception:
+                pass
+            # Fallback: OS-level terminal clear
+            try:
+                if os.name == 'nt':
+                    os.system('cls')
+                else:
+                    os.system('clear')
+            except Exception:
+                pass
 
 def get_user_input_ui():
     default_names = "Meteor"
