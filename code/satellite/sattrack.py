@@ -934,7 +934,8 @@ class satelliteapp:
 
         # UI elements
         header = urwid.Text(parse_colours(f"[green]{title}[/green]"), align='center')
-        spinner = urwid.AttrMap(urwid.Text(".", align='center'), 'green')
+        spinner_text = urwid.Text(".", align='center')
+        spinner = urwid.AttrMap(spinner_text, 'green')
         body = urwid.Pile([
             ('pack', header),
             ('pack', urwid.Divider()),
@@ -949,7 +950,7 @@ class satelliteapp:
             if messages_holder["done"]:
                 raise urwid.ExitMainLoop()
             # simple spinner tick
-            spinner.set_text(spinner.text + '.')
+            spinner_text.set_text(spinner_text.text + '.')
             loop.set_alarm_in(0.2, poll)
 
         t = threading.Thread(target=worker, daemon=True)
