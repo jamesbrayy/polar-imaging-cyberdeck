@@ -1009,23 +1009,40 @@ class satelliteapp:
         if sat_buttons:
             sat_walker = urwid.SimpleFocusListWalker(sat_buttons)
 
-            # preview on current focus (keyboard or mouse)
             _orig_set_focus = sat_walker.set_focus
             def _set_focus_and_preview(pos):
                 _orig_set_focus(pos)
-                # update hover index and preview to match the newly focused item
-                self.hover_satellite_index = pos
-                self.current_az, self.current_el = self.preview_satellite_position(pos)
+                # extract the true sat_index from the focused button (unwrap AttrMap → Button)
+                try:
+                    btn = sat_walker[pos]
+                    # if wrapped in AttrMap, unwrap to the original SatellitePreviewButton
+                    core = getattr(btn, "original_widget", btn)
+                    sat_idx = getattr(core, "sat_index", pos)
+                except Exception:
+                    sat_idx = pos
+
+                # update hover to the true index, then recompute and refresh
+                self.hover_satellite_index = sat_idx
+                self.current_az, self.current_el = self.preview_satellite_position(sat_idx)
                 self.update_servo_display()
+
+                # immediately sync sliders/servo if you’re in this tab
+                # ensures they match the newly focused satellite without waiting for the timer tick
+                if hasattr(self, "az_slider_widget") and hasattr(self, "el_slider_widget"):
+                    servo_az, servo_el = satellite_to_servo_coords(self.current_az, self.current_el)
+                    self.az_slider_widget.set_value(servo_az)
+                    self.el_slider_widget.set_value(servo_el)
+
             sat_walker.set_focus = _set_focus_and_preview
 
-            # ensure initial focus shows the correct preview
+            # ensure initial focus uses the true sat_index as well
             if len(sat_walker):
-                sat_walker.set_focus(0)
+                _set_focus_and_preview(0)
 
             sat_listbox = urwid.BoxAdapter(urwid.ListBox(sat_walker), height=6)
         else:
             sat_listbox = urwid.Text("No satellites available", align='center')
+
 
 
         auto_pile = urwid.Pile([
