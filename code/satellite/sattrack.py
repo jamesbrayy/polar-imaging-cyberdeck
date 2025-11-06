@@ -590,6 +590,13 @@ class satelliteapp:
         self.map_update_interval = map_update_interval
         self.pass_update_interval = compute_update_interval
 
+        # persistent decoder ui
+        self.decoder_ui = None
+        self.dec_target_text = None
+        self.dec_status = None
+        self.dec_log = None
+        self.dec_imgs = None
+
         # Background compute cache/state
         self._bg_computing = False
         self._bg_result = None
@@ -614,6 +621,10 @@ class satelliteapp:
         self.autotrack_gain = None             # set a number to force manual gain
 
     def create_decoder_widget(self):
+        # build once; reuse across tab switches so content does not disappear
+        if self.decoder_ui is not None:
+            return self.decoder_ui
+
         sel = "None"
         if self.satellites:
             idx = min(self.selected_satellite_index, len(self.satellites) - 1)
@@ -622,11 +633,12 @@ class satelliteapp:
         self.dec_status = urwid.Text("", align='left')
         self.dec_log = urwid.Text("", align='left')
         self.dec_imgs = urwid.Text("", align='left')
+        self.dec_target_text = urwid.Text(f"target satellite: {sel}")
 
         info = urwid.Pile([
             ('pack', urwid.Text("satdump autotrack (uses satdump db)", align='center')),
             ('pack', urwid.Divider()),
-            ('pack', urwid.Text(f"target satellite: {sel}")),
+            ('pack', self.dec_target_text),
             ('pack', urwid.Text(f"sdr: {self.autotrack_sdr}  samplerate: {self.autotrack_samplerate}")),
             ('pack', urwid.Text(f"output: {str(self.autotrack_out)}")),
             ('pack', urwid.Divider()),
@@ -642,11 +654,22 @@ class satelliteapp:
         log_box = urwid.LineBox(urwid.Filler(self.dec_log, valign='top'), title="satdump output")
         img_box = urwid.LineBox(urwid.Filler(self.dec_imgs, valign='top'), title="new images")
 
-        return urwid.Columns([
+        self.decoder_ui = urwid.Columns([
             ('weight', 2, info),
             ('weight', 3, log_box),
             ('weight', 2, img_box),
         ], dividechars=1)
+
+        return self.decoder_ui
+
+    def refresh_decoder_header(self):
+        if not self.dec_target_text:
+            return
+        sel = "None"
+        if self.satellites:
+            idx = min(self.selected_satellite_index, len(self.satellites) - 1)
+            sel = self.satellites[idx].name
+        self.dec_target_text.set_text(f"target satellite: {sel}")
 
     def autotrack_start(self, button):
         if not self.satellites:
@@ -870,9 +893,12 @@ class satelliteapp:
         self.selected_satellite_index = sat_index
         self.current_az, self.current_el = self.preview_satellite_position(sat_index)
         self.update_servo_display()
-        if self.current_mode == "decoder" and hasattr(self, 'dec_status'):
-            # header pulls satellite name on render; force re-render by resetting content
-            self.update_main_content()
+        if self.current_mode == "decoder":
+            self.refresh_decoder_header()
+            if hasattr(self, 'dec_status'):
+                # header pulls satellite name on render; force re-render by resetting content
+                self.update_main_content()
+
 
     
     def update_satellite_position(self):
@@ -1072,12 +1098,12 @@ class satelliteapp:
             self.info_content = self.create_servo_control_widget()
             title = "Servo Control"
         else:
-            self.info_content = self.create_decoder_widget()
+            self.info_content = self.create_decoder_widget()  # reuse, no reset
+            self.refresh_decoder_header()
             title = "Decoder"
 
         self.info_widget = urwid.AttrMap(urwid.LineBox(self.info_content, title=title), 'border')
         self.main_content.original_widget = self.info_widget
-
 
     def show_loading_screen(self, messages, duration=2.0, title="Loading"):
         # Build a single urwid.Text markup list that can accept either a plain string
@@ -1209,7 +1235,7 @@ class satelliteapp:
             self.map_text.set_text(parse_colours(map_display))
             self.metrics_placeholder.original_widget = metrics
         
-                # decoder tab live updates
+        # decoder tab live updates
         if self.current_mode == "decoder":
             if self.autotrack_runner and self.autotrack_runner.alive:
                 if self.autotrack_runner.get_new_lines():
@@ -1217,10 +1243,12 @@ class satelliteapp:
 
             new = []
             if self.autotrack_out.exists():
-                for p in self.autotrack_out.glob("**/*.png"):
-                    if p not in self.autotrack_seen:
-                        self.autotrack_seen.add(p)
-                        new.append(p)
+                for ext in ("*.png","*.jpg","*.jpeg","*.bmp"):
+                    for p in self.autotrack_out.glob(f"**/{ext}"):
+                        if p not in self.autotrack_seen:
+                            self.autotrack_seen.add(p)
+                            new.append(p)
+
             if new:
                 self.autotrack_last_images.extend(new)
                 self.autotrack_last_images = self.autotrack_last_images[-12:]
