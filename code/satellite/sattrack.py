@@ -300,24 +300,33 @@ class AsciiVerticalSlider(urwid.Pile):
 
     def keypress(self, size, key):
         old_val = self.current_val
+
+        # basic steps
         if key == 'up':
             self.current_val = min(self.max_val, self.current_val + 1)
         elif key == 'down':
             self.current_val = max(self.min_val, self.current_val - 1)
-        elif key == 'shift up':
+
+        # ±10 deg: support multiple terminals
+        elif key in ('shift up', 'ctrl up', '+'):
             self.current_val = min(self.max_val, self.current_val + 10)
-        elif key == 'shift down':
+        elif key in ('shift down', 'ctrl down', '-'):
             self.current_val = max(self.min_val, self.current_val - 10)
-        elif key == 'page up':
+
+        # larger jumps
+        elif key in ('page up',):
             self.current_val = min(self.max_val, self.current_val + 45)
-        elif key == 'page down':
+        elif key in ('page down',):
             self.current_val = max(self.min_val, self.current_val - 45)
+
+        # bounds
         elif key == 'home':
             self.current_val = self.max_val
         elif key == 'end':
             self.current_val = self.min_val
         else:
             return super().keypress(size, key)
+
         if self.current_val != old_val:
             self._update_display()
             if self.callback:
@@ -350,7 +359,7 @@ class LabeledSlider(urwid.Pile):
         if self.callback:
             self.callback(value)
 
-    def _glide_to(self, target=0.0, seconds=3.0, steps=60):
+    def glide_to(self, target=0.0, seconds=3.0, steps=60):
         import threading, time
         start = self.slider.current_val
         delta = target - start
@@ -388,7 +397,7 @@ class LabeledSlider(urwid.Pile):
     def keypress(self, size, key):
         # space = smoothly return THIS slider to zero without abrupt servo motion
         if key == ' ':
-            self._glide_to(target=0.0, seconds=3.0, steps=60)
+            self.glide_to(target=0.0, seconds=3.0, steps=100)
             return None
         return self.slider.keypress(size, key)
     
@@ -627,6 +636,12 @@ class satelliteapp:
         self.tracking_locked = False
         self.locked_satellite_index = None
 
+        # servo glide state
+        self._glide_thread = None
+        self._glide_gen = 0
+        self._auto_prev = False
+        self.last_tracked_index = None
+
         # persistent decoder ui
         self.decoder_ui = None
         self.dec_target_text = None
@@ -707,6 +722,57 @@ class satelliteapp:
             idx = min(self.selected_satellite_index, len(self.satellites) - 1)
             sel = self.satellites[idx].name
         self.dec_target_text.set_text(f"Target Satellite: {sel}")
+
+        def _start_glide_to(self, target_az, target_el, seconds=3.0, steps=100):
+            import threading, time
+            self._glide_gen += 1
+            gen = self._glide_gen
+
+            # clamp to safe ranges
+            target_az = max(-135.0, min(135.0, float(target_az)))
+            target_el = max(-90.0,  min(90.0,  float(target_el)))
+
+            start_az = float(getattr(self.servo_controller, "azimuth_angle", 0.0))
+            start_el = float(getattr(self.servo_controller, "elevation_angle", 0.0))
+            d_az = target_az - start_az
+            d_el = target_el - start_el
+
+            if steps <= 0 or seconds <= 0 or (abs(d_az) < 1e-6 and abs(d_el) < 1e-6):
+                # snap if trivial
+                if hasattr(self, 'az_slider_widget'): self.az_slider_widget.set_value(target_az)
+                if hasattr(self, 'el_slider_widget'): self.el_slider_widget.set_value(target_el)
+                self.servo_controller.set_azimuth(target_az)
+                self.servo_controller.set_elevation(target_el)
+                return
+
+            dt = seconds / float(steps)
+
+            def run():
+                for i in range(1, steps + 1):
+                    # cancelled?
+                    if gen != self._glide_gen:
+                        return
+                    alpha = i / float(steps)
+                    v_az = start_az + d_az * alpha
+                    v_el = start_el + d_el * alpha
+                    # drive hardware
+                    self.servo_controller.set_azimuth(v_az)
+                    self.servo_controller.set_elevation(v_el)
+                    # move sliders
+                    if hasattr(self, 'az_slider_widget'): self.az_slider_widget.set_value(v_az)
+                    if hasattr(self, 'el_slider_widget'): self.el_slider_widget.set_value(v_el)
+                    # breathe
+                    time.sleep(dt)
+                # final snap
+                if gen == self._glide_gen:
+                    self.servo_controller.set_azimuth(target_az)
+                    self.servo_controller.set_elevation(target_el)
+                    if hasattr(self, 'az_slider_widget'): self.az_slider_widget.set_value(target_az)
+                    if hasattr(self, 'el_slider_widget'): self.el_slider_widget.set_value(target_el)
+
+            t = threading.Thread(target=run, daemon=True)
+            t.start()
+            self._glide_thread = t
 
     def autotrack_start(self, button):
         if not self.satellites:
@@ -922,9 +988,26 @@ class satelliteapp:
             total_pages = (len(self.satellites) + 4) // 5
             self.current_sat_page = self.current_sat_page % total_pages
 
-    def toggle_auto_tracking(self, button):
-        self.auto_tracking_enabled = not self.auto_tracking_enabled
-        self.update_servo_display()
+        def toggle_auto_tracking(self, button):
+            self.auto_tracking_enabled = not self.auto_tracking_enabled
+            # track state edge for update loop
+            prev = self._auto_prev
+            self._auto_prev = self.auto_tracking_enabled
+
+            # if just enabled and we have a locked target, glide once to its current position
+            if self.auto_tracking_enabled and self.tracking_locked and self.locked_satellite_index is not None and self.satellites:
+                idx = min(self.locked_satellite_index, len(self.satellites)-1)
+                now = datetime.now(timezone.utc)
+                t = self.ts.from_datetime(now)
+                diff = self.satellites[idx] - self.observer
+                el, az, _ = diff.at(t).altaz()
+                self.current_az = az.degrees
+                self.current_el = el.degrees
+                g_az, g_el = satellite_to_servo_coords(self.current_az, self.current_el)
+                self._start_glide_to(g_az, g_el, seconds=2.0, steps=80)
+                self.last_tracked_index = idx
+
+            self.update_servo_display()
     
     def select_satellite(self, button, sat_index):
         # cannot change lock while auto track is enabled
@@ -958,7 +1041,6 @@ class satelliteapp:
             self.selected_satellite_index = 0
 
         try:
-            # choose index for tracking vs preview
             if self.auto_tracking_enabled and self.tracking_locked and self.locked_satellite_index is not None:
                 idx = self.locked_satellite_index
                 sat = self.satellites[idx]
@@ -966,29 +1048,34 @@ class satelliteapp:
                 t = self.ts.from_datetime(now)
                 diff = sat - self.observer
                 el, az, _ = diff.at(t).altaz()
-
-                # update display to locked values
-                self.current_az = az.degrees
-                self.current_el = el.degrees
-
-                # drive servos and sliders only in auto mode, locked
                 servo_az, servo_el = satellite_to_servo_coords(self.current_az, self.current_el)
-                if self.current_el > 0 and servo_el >= -70:
-                    self.servo_controller.set_azimuth(servo_az)
-                    self.servo_controller.set_elevation(servo_el)
-                    if hasattr(self, 'az_slider_widget'):
-                        self.az_slider_widget.set_value(servo_az)
-                    if hasattr(self, 'el_slider_widget'):
-                        self.el_slider_widget.set_value(servo_el)
-                else:
-                    self.servo_controller.set_elevation(0)
-                    if hasattr(self, 'el_slider_widget'):
-                        self.el_slider_widget.set_value(0)
-            else:
-                # not auto-tracking locked: do not move servos or sliders
-                # keep preview text responsive to hover (already handled in preview_satellite)
-                pass
 
+                # detect autonomous jump: newly enabled or target changed
+                jump = (self.last_tracked_index != idx) or (not self._auto_prev and self.auto_tracking_enabled)
+                # update edge state for next tick
+                self._auto_prev = self.auto_tracking_enabled
+                self.last_tracked_index = idx
+
+                if jump:
+                    # glide once to new target
+                    self._start_glide_to(servo_az, servo_el, seconds=2.0, steps=80)
+                else:
+                    # normal per-tick tracking (small deltas), no glide
+                    if self.current_el > 0 and servo_el >= -70:
+                        self.servo_controller.set_azimuth(servo_az)
+                        self.servo_controller.set_elevation(servo_el)
+                        if hasattr(self, 'az_slider_widget'):
+                            self.az_slider_widget.set_value(servo_az)
+                        if hasattr(self, 'el_slider_widget'):
+                            self.el_slider_widget.set_value(servo_el)
+                    else:
+                        self.servo_controller.set_elevation(0)
+                        if hasattr(self, 'el_slider_widget'):
+                            self.el_slider_widget.set_value(0)
+            else:
+                # not in auto-locked mode; do not move servos here
+                self._auto_prev = False
+                self.last_tracked_index = None
         except Exception:
             self.current_az = 0.0
             self.current_el = 0.0
