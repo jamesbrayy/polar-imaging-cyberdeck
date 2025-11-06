@@ -22,14 +22,14 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 console = Console()
 tle_url = "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather"
 tle_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "satellites.txt")
-UPDATE_INTERVAL = float(os.getenv("SATTRACK_UPDATE_INTERVAL", "0.1"))
+ui_update_interval = float(os.getenv("SATTRACK_UPDATE_INTERVAL", "0.05"))
 # Heavier map/telemetry update cadence separate from UI tick
-MAP_UPDATE_INTERVAL = float(os.getenv("SATTRACK_MAP_UPDATE_INTERVAL", "1.2"))
-MAP_FORECAST_POINTS = int(os.getenv("SATTRACK_MAP_POINTS", "24"))
-MAP_HORIZON_MIN = float(os.getenv("SATTRACK_MAP_HORIZON_MIN", "12"))
-MAP_MAX_SATS = int(os.getenv("SATTRACK_MAP_MAX_SATS", "4"))
+map_update_interval = float(os.getenv("SATTRACK_MAP_UPDATE_INTERVAL", "0.5"))
+map_forecast_points = int(os.getenv("SATTRACK_MAP_POINTS", "30"))
+map_forecast_length = float(os.getenv("SATTRACK_MAP_HORIZON_MIN", "30"))
+max_satellites = int(os.getenv("SATTRACK_max_satellites", "8"))
 # How often to recompute expensive next-pass predictions per satellite (seconds)
-PASS_UPDATE_INTERVAL = float(os.getenv("SATTRACK_PASS_UPDATE_INTERVAL", "45"))
+PASS_UPDATE_INTERVAL = float(os.getenv("SATTRACK_PASS_UPDATE_INTERVAL", "60"))
 colourlist = ["white", "cyan", "dark_blue", "dark_gray", "blue", "magenta", "red", "yellow"]
 palette = [
     ("black", "black", ""), ("dark_red", "dark red", ""), ("dark_green", "dark green", ""),
@@ -485,12 +485,12 @@ def draw_map_frame(positions, satellites, ts, observer_lat, observer_lon):
     frame = [row.copy() for row in ascii_map]
     now = datetime.now(timezone.utc)
     # Build a limited list of forecast times to lighten rendering
-    # Spread MAP_FORECAST_POINTS across MAP_HORIZON_MIN minutes
-    steps = max(1, MAP_FORECAST_POINTS)
-    step_min = MAP_HORIZON_MIN / max(1, steps - 1)
+    # Spread map_forecast_points across map_forecast_length minutes
+    steps = max(1, map_forecast_points)
+    step_min = map_forecast_length / max(1, steps - 1)
     forecast_times = [ts.utc(now + timedelta(minutes=i * step_min)) for i in range(steps)]
     
-    for i, sat in enumerate(satellites[:MAP_MAX_SATS]):
+    for i, sat in enumerate(satellites[:max_satellites]):
         colour = colourlist[i % len(colourlist)]
         for t in forecast_times:
             sub = wgs84.subpoint(sat.at(t))
@@ -519,8 +519,8 @@ class satelliteapp:
         self.current_mode = "satellite_tracking"
         self.current_sat_page = 0
         self.servo_controller = servo_controller()
-        self.update_interval = UPDATE_INTERVAL
-        self.map_update_interval = MAP_UPDATE_INTERVAL
+        self.update_interval = ui_update_interval
+        self.map_update_interval = map_update_interval
         self.pass_update_interval = PASS_UPDATE_INTERVAL
 
         # Background compute cache/state
