@@ -248,7 +248,7 @@ class VerticalSlider(urwid.Pile):
         return None
 
 class AsciiVerticalSlider(urwid.Pile):
-    def __init__(self, min_val, max_val, initial_val, callback=None, label="", height=12):
+    def __init__(self, min_val, max_val, initial_val, callback=None, label="", height=18):
         self.min_val = min_val
         self.max_val = max_val
         self.current_val = initial_val
@@ -333,7 +333,7 @@ class LabeledSlider(urwid.Pile):
     def __init__(self, min_val, max_val, initial_val, callback, title):
         self.slider = AsciiVerticalSlider(min_val, max_val, initial_val, self._on_change, title)
         self.callback = callback
-        self.value_text = urwid.Text(f"{initial_val} deg", align='center')
+        self.value_text = urwid.Text(f"{initial_val:.3f} °", align='center')
         self.title_text = urwid.Text(title, align='center')
         
         super().__init__([
@@ -348,10 +348,10 @@ class LabeledSlider(urwid.Pile):
     
     def set_value(self, value):
         self.slider.set_value(value)
-        self.value_text.set_text(f"{value} deg")
+        self.value_text.set_text(f"{value} °")
     
     def _on_change(self, value):
-        self.value_text.set_text(f"{value} deg")
+        self.value_text.set_text(f"{value} °")
         if self.callback:
             self.callback(value)
     
@@ -589,6 +589,8 @@ class satelliteapp:
         self.update_interval = ui_update_interval
         self.map_update_interval = map_update_interval
         self.pass_update_interval = compute_update_interval
+        self.hover_satellite_index = None
+        self.tracking_locked = False
 
         # persistent decoder ui
         self.decoder_ui = None
@@ -890,26 +892,38 @@ class satelliteapp:
         self.update_servo_display()
     
     def select_satellite(self, button, sat_index):
-        self.selected_satellite_index = sat_index
-        self.current_az, self.current_el = self.preview_satellite_position(sat_index)
+        if self.tracking_locked and self.selected_satellite_index == sat_index:
+            # unlock on second select of the same satellite
+            self.tracking_locked = False
+        else:
+            # lock to the newly selected satellite
+            self.selected_satellite_index = sat_index
+            self.tracking_locked = True
+
+        # refresh the displayed az/el based on the active reference
+        if self.tracking_locked:
+            idx = self.selected_satellite_index
+        else:
+            idx = self.hover_satellite_index if self.hover_satellite_index is not None else self.selected_satellite_index
+
+        self.current_az, self.current_el = self.preview_satellite_position(idx)
         self.update_servo_display()
-        if self.current_mode == "decoder":
-            self.refresh_decoder_header()
-            if hasattr(self, 'dec_status'):
-                # header pulls satellite name on render; force re-render by resetting content
-                self.update_main_content()
-
-
     
     def update_satellite_position(self):
         if not self.satellites or not self.observer or not self.ts:
             return
-        
+
         if self.selected_satellite_index >= len(self.satellites):
             self.selected_satellite_index = 0
-        
+
+        # pick source of truth: locked selection or current hover
+        if self.tracking_locked:
+            idx = self.selected_satellite_index
+        else:
+            idx = self.hover_satellite_index if (self.hover_satellite_index is not None and self.hover_satellite_index < len(self.satellites)) else self.selected_satellite_index
+
         try:
-            sat = self.satellites[self.selected_satellite_index]
+            sat = self.satellites[idx]
             now = datetime.now(timezone.utc)
             t = self.ts.from_datetime(now)
             diff = sat - self.observer
@@ -959,14 +973,18 @@ class satelliteapp:
         if hasattr(self, 'auto_status_text'):
             status = "ENABLED" if self.auto_tracking_enabled else "DISABLED"
             self.auto_status_text.set_text(f"Auto Tracking: {status}")
-        
+
         if hasattr(self, 'selected_sat_text') and self.satellites:
-            if self.selected_satellite_index < len(self.satellites):
-                sat_name = self.satellites[self.selected_satellite_index].name
-                self.selected_sat_text.set_text(f"Target: {sat_name}")
-        
+            if self.tracking_locked:
+                name = self.satellites[self.selected_satellite_index].name
+                self.selected_sat_text.set_text(f"Target: {name} [locked]")
+            else:
+                idx = self.hover_satellite_index if (self.hover_satellite_index is not None and self.hover_satellite_index < len(self.satellites)) else self.selected_satellite_index
+                name = self.satellites[idx].name
+                self.selected_sat_text.set_text(f"Target: {name}")
+
         if hasattr(self, 'position_text'):
-            self.position_text.set_text(f"Az: {self.current_az:.1f} deg | El: {self.current_el:.1f} deg")
+            self.position_text.set_text(f"Az: {self.current_az:.3f} ° | El: {self.current_el:.3f} °")
     
     def create_auto_tracking_widget(self):
         # Auto tracking toggle button
@@ -978,7 +996,7 @@ class satelliteapp:
 
         self.auto_status_text = urwid.Text("Auto Tracking: DISABLED", align='center')
         self.selected_sat_text = urwid.Text("Target: None", align='center')
-        self.position_text = urwid.Text("Az: 0.0 deg | El: 0.0 deg", align='center')
+        self.position_text = urwid.Text("Az: 0.000 ° | El: 0.000 °", align='center')
 
         sat_buttons = []
         for i, sat in enumerate(self.satellites):
@@ -1008,6 +1026,7 @@ class satelliteapp:
         return urwid.AttrMap(urwid.LineBox(auto_pile, title="Auto Tracking"), 'border')
 
     def preview_satellite(self, sat_index):
+        self.hover_satellite_index = sat_index
         self.current_az, self.current_el = self.preview_satellite_position(sat_index)
         self.update_servo_display()
     
