@@ -999,7 +999,7 @@ class satelliteapp:
             self.current_az = az.degrees
             self.current_el = el.degrees
             g_az, g_el = satellite_to_servo_coords(self.current_az, self.current_el)
-            self._start_glide_to(g_az, g_el, seconds=2.0, steps=80)
+            self._start_glide_to(g_az, g_el, seconds=2.0)
             self.last_tracked_index = idx
 
         self.update_servo_display()
