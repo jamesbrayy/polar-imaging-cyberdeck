@@ -994,7 +994,6 @@ class satelliteapp:
             sat_listbox = urwid.Text("No satellites available", align='center')
 
         auto_pile = urwid.Pile([
-            ('pack', urwid.Text("Autonomous Tracking Control", align='center')),
             ('pack', urwid.Divider()),
             ('pack', self.auto_status_text),
             ('pack', self.selected_sat_text),
@@ -1049,7 +1048,6 @@ class satelliteapp:
         )
         
         manual_control = urwid.Pile([
-            ('pack', urwid.Text("Manual Servo Control", align='center')),
             ('pack', urwid.Divider()),
             ('pack', status_widget),
             ('pack', urwid.Divider()),
