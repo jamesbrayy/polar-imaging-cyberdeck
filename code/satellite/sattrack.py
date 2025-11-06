@@ -1041,6 +1041,7 @@ class satelliteapp:
             self.selected_satellite_index = 0
 
         try:
+            # choose index for tracking vs preview
             if self.auto_tracking_enabled and self.tracking_locked and self.locked_satellite_index is not None:
                 idx = self.locked_satellite_index
                 sat = self.satellites[idx]
@@ -1048,34 +1049,29 @@ class satelliteapp:
                 t = self.ts.from_datetime(now)
                 diff = sat - self.observer
                 el, az, _ = diff.at(t).altaz()
+
+                # update display to locked values
+                self.current_az = az.degrees
+                self.current_el = el.degrees
+
+                # drive servos and sliders only in auto mode, locked
                 servo_az, servo_el = satellite_to_servo_coords(self.current_az, self.current_el)
-
-                # detect autonomous jump: newly enabled or target changed
-                jump = (self.last_tracked_index != idx) or (not self._auto_prev and self.auto_tracking_enabled)
-                # update edge state for next tick
-                self._auto_prev = self.auto_tracking_enabled
-                self.last_tracked_index = idx
-
-                if jump:
-                    # glide once to new target
-                    self._start_glide_to(servo_az, servo_el, seconds=2.0, steps=80)
+                if self.current_el > 0 and servo_el >= -70:
+                    self.servo_controller.set_azimuth(servo_az)
+                    self.servo_controller.set_elevation(servo_el)
+                    if hasattr(self, 'az_slider_widget'):
+                        self.az_slider_widget.set_value(servo_az)
+                    if hasattr(self, 'el_slider_widget'):
+                        self.el_slider_widget.set_value(servo_el)
                 else:
-                    # normal per-tick tracking (small deltas), no glide
-                    if self.current_el > 0 and servo_el >= -70:
-                        self.servo_controller.set_azimuth(servo_az)
-                        self.servo_controller.set_elevation(servo_el)
-                        if hasattr(self, 'az_slider_widget'):
-                            self.az_slider_widget.set_value(servo_az)
-                        if hasattr(self, 'el_slider_widget'):
-                            self.el_slider_widget.set_value(servo_el)
-                    else:
-                        self.servo_controller.set_elevation(0)
-                        if hasattr(self, 'el_slider_widget'):
-                            self.el_slider_widget.set_value(0)
+                    self.servo_controller.set_elevation(0)
+                    if hasattr(self, 'el_slider_widget'):
+                        self.el_slider_widget.set_value(0)
             else:
-                # not in auto-locked mode; do not move servos here
-                self._auto_prev = False
-                self.last_tracked_index = None
+                # not auto-tracking locked: do not move servos or sliders
+                # keep preview text responsive to hover (already handled in preview_satellite)
+                pass
+
         except Exception:
             self.current_az = 0.0
             self.current_el = 0.0
