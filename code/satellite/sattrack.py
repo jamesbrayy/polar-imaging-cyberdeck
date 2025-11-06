@@ -375,7 +375,7 @@ def check_connection():
         requests.get("https://www.google.com", timeout=5, verify=False)
         return True, "[green]Internet connected[/green]"
     except:
-        return False, "[bright_red]No internet[/bright_red]"
+        return False, "[red]No internet[/red]"
 
 def fetch_tle_data():
     try:
@@ -396,13 +396,13 @@ def fetch_tle_data():
             f.write("\n".join(cleaned))
         return True, "[green]TLE data updated[/green]"
     except Exception as e:
-        return False, f"[bright_red]TLE fetch error: {e}[/bright_red]"
+        return False, f"[red]TLE fetch error: {e}[/red]"
 
 def get_satellites(names):
     try:
         lines = open(tle_file).read().splitlines()
     except FileNotFoundError:
-        return [], ["[bright_red]TLE file not found[/bright_red]"]
+        return [], ["[red]TLE file not found[/red]"]
     
     sats, used_names, messages = [], set(), []
     
@@ -415,12 +415,12 @@ def get_satellites(names):
                 used_names.add(line_name)
                 found = True
         if not found:
-            messages.append(f"[bright_yellow]âš  '{name}' not found[/bright_red]")
+            messages.append(f"[yellow]âš  '{name}' not found[/red]")
     
     # sanitise color tags for 'not found' messages (fix mismatched closing tag)
     messages = [
-        m.replace("[/bright_red]", "[/bright_yellow]")
-        if m.startswith("[bright_yellow]") and "not found" in m else m
+        m.replace("[/red]", "[/yellow]")
+        if m.startswith("[yellow]") and "not found" in m else m
         for m in messages
     ]
     return sats[:8], messages
@@ -962,7 +962,7 @@ class satelliteapp:
             pass
 
         if messages_holder["err"]:
-            return [f"[bright_red]{messages_holder['err']}[/bright_red]"]
+            return [f"[red]{messages_holder['err']}[/red]"]
         return messages_holder["msgs"]
 
     def update_display(self):
@@ -1071,7 +1071,7 @@ class satelliteapp:
 
         
         if not self.satellites:
-            self.show_loading_screen(["[bright_red]�o- No satellites found[/bright_red]"], duration=5.0, title="")
+            self.show_loading_screen(["[red]No satellites found[/red]"], duration=5.0, title="")
             return
         # Block until the first map/telemetry frame is computed
         self.show_loading_task(lambda: (self._compute_satellite_frame_bg() or ["[white]Map ready[/white]"]), title="Preparing map")
@@ -1127,7 +1127,7 @@ def get_user_input_ui():
                 lat_str, lon_str = coords_raw.split()
                 float(lat_str); float(lon_str)
             except Exception:
-                message_text.set_text(parse_colours("[bright_red]Enter coordinates as 'lat lon' (e.g. -31.95 115.86)[/bright_red]"))
+                message_text.set_text(parse_colours("[red]Enter coordinates as 'lat lon' (e.g. -31.95 115.86)[/red]"))
                 return
 
         result["fetch"] = bool(fetch_checkbox.get_state())
@@ -1172,7 +1172,7 @@ if __name__ == "__main__":
                         *(
                             (lambda connected, msg: (
                                 msg,
-                                fetch_tle_data()[1] if connected else "[bright_yellow]Using local TLE file[/bright_yellow]"
+                                fetch_tle_data()[1] if connected else "[yellow]Using local TLE file[/yellow]"
                             ))(*check_connection())
                         )
                     )
