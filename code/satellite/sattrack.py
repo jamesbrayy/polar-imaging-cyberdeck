@@ -635,6 +635,7 @@ class satelliteapp:
         self.hover_satellite_index = None
         self.tracking_locked = False
         self.locked_satellite_index = None
+        self._glide_state = None  # {"t0":..., "dur":..., "start_az":..., "start_el":..., "target_az":..., "target_el":...}
 
         # servo glide state
         self._glide_thread = None
@@ -723,56 +724,50 @@ class satelliteapp:
             sel = self.satellites[idx].name
         self.dec_target_text.set_text(f"Target Satellite: {sel}")
 
-    def _start_glide_to(self, target_az, target_el, seconds=3.0, steps=100):
-        import threading, time
-        self._glide_gen += 1
-        gen = self._glide_gen
-
-        # clamp to safe ranges
+    def _start_glide_to(self, target_az, target_el, seconds=2.0):
+        import time
+        # clamp targets
         target_az = max(-135.0, min(135.0, float(target_az)))
         target_el = max(-90.0,  min(90.0,  float(target_el)))
-
+        # current servo angles as start
         start_az = float(getattr(self.servo_controller, "azimuth_angle", 0.0))
         start_el = float(getattr(self.servo_controller, "elevation_angle", 0.0))
-        d_az = target_az - start_az
-        d_el = target_el - start_el
+        self._glide_state = {
+            "t0": time.time(),
+            "dur": max(0.01, float(seconds)),
+            "start_az": start_az,
+            "start_el": start_el,
+            "target_az": target_az,
+            "target_el": target_el,
+        }
 
-        if steps <= 0 or seconds <= 0 or (abs(d_az) < 1e-6 and abs(d_el) < 1e-6):
-            # snap if trivial
-            if hasattr(self, 'az_slider_widget'): self.az_slider_widget.set_value(target_az)
-            if hasattr(self, 'el_slider_widget'): self.el_slider_widget.set_value(target_el)
-            self.servo_controller.set_azimuth(target_az)
-            self.servo_controller.set_elevation(target_el)
-            return
+    def _step_glide(self):
+        """advance an in-progress glide. returns True if gliding, else False."""
+        if not self._glide_state:
+            return False
+        import time
+        gs = self._glide_state
+        t = time.time()
+        alpha = (t - gs["t0"]) / gs["dur"]
+        if alpha >= 1.0:
+            v_az = gs["target_az"]
+            v_el = gs["target_el"]
+            self._glide_state = None
+        else:
+            if alpha < 0.0:
+                alpha = 0.0
+            v_az = gs["start_az"] + (gs["target_az"] - gs["start_az"]) * alpha
+            v_el = gs["start_el"] + (gs["target_el"] - gs["start_el"]) * alpha
 
-        dt = seconds / float(steps)
+        # drive hardware and sliders
+        self.servo_controller.set_azimuth(v_az)
+        self.servo_controller.set_elevation(v_el)
+        if hasattr(self, 'az_slider_widget'):
+            self.az_slider_widget.set_value(v_az)
+        if hasattr(self, 'el_slider_widget'):
+            self.el_slider_widget.set_value(v_el)
+        return self._glide_state is not None
 
-        def run():
-            for i in range(1, steps + 1):
-                # cancelled?
-                if gen != self._glide_gen:
-                    return
-                alpha = i / float(steps)
-                v_az = start_az + d_az * alpha
-                v_el = start_el + d_el * alpha
-                # drive hardware
-                self.servo_controller.set_azimuth(v_az)
-                self.servo_controller.set_elevation(v_el)
-                # move sliders
-                if hasattr(self, 'az_slider_widget'): self.az_slider_widget.set_value(v_az)
-                if hasattr(self, 'el_slider_widget'): self.el_slider_widget.set_value(v_el)
-                # breathe
-                time.sleep(dt)
-            # final snap
-            if gen == self._glide_gen:
-                self.servo_controller.set_azimuth(target_az)
-                self.servo_controller.set_elevation(target_el)
-                if hasattr(self, 'az_slider_widget'): self.az_slider_widget.set_value(target_az)
-                if hasattr(self, 'el_slider_widget'): self.el_slider_widget.set_value(target_el)
-
-        t = threading.Thread(target=run, daemon=True)
-        t.start()
-        self._glide_thread = t
 
     def autotrack_start(self, button):
         if not self.satellites:
@@ -1032,7 +1027,6 @@ class satelliteapp:
 
         self.update_servo_display()
 
-    
     def update_satellite_position(self):
         if not self.satellites or not self.observer or not self.ts:
             return
@@ -1040,10 +1034,13 @@ class satelliteapp:
         if self.selected_satellite_index >= len(self.satellites):
             self.selected_satellite_index = 0
 
+        # if a glide is active, advance it and skip any direct writes this tick
+        if self._step_glide():
+            return
+
         try:
             # only track when autotrack is enabled AND a satellite is locked
             if not (self.auto_tracking_enabled and self.tracking_locked and self.locked_satellite_index is not None):
-                # not in auto-locked mode; do not move servos or sliders
                 self._auto_prev = False
                 self.last_tracked_index = None
                 return
@@ -1073,26 +1070,28 @@ class satelliteapp:
             self.last_tracked_index = idx
 
             if jump:
-                # glide once to the new target position
-                self._start_glide_to(servo_az, servo_el, seconds=2.0, steps=80)
+                # start a glide and let the next ticks advance it
+                self._start_glide_to(servo_az, servo_el, seconds=2.0)
+                return
+
+            # regular tracking updates (small deltas), no glide
+            if self.current_el > 0 and servo_el >= -70:
+                self.servo_controller.set_azimuth(servo_az)
+                self.servo_controller.set_elevation(servo_el)
+                if hasattr(self, 'az_slider_widget'):
+                    self.az_slider_widget.set_value(servo_az)
+                if hasattr(self, 'el_slider_widget'):
+                    self.el_slider_widget.set_value(servo_el)
             else:
-                # regular tracking updates (small deltas), no glide
-                if self.current_el > 0 and servo_el >= -70:
-                    self.servo_controller.set_azimuth(servo_az)
-                    self.servo_controller.set_elevation(servo_el)
-                    if hasattr(self, 'az_slider_widget'):
-                        self.az_slider_widget.set_value(servo_az)
-                    if hasattr(self, 'el_slider_widget'):
-                        self.el_slider_widget.set_value(servo_el)
-                else:
-                    # park elevation safely if below horizon
-                    self.servo_controller.set_elevation(0)
-                    if hasattr(self, 'el_slider_widget'):
-                        self.el_slider_widget.set_value(0)
+                # park elevation safely if below horizon
+                self.servo_controller.set_elevation(0)
+                if hasattr(self, 'el_slider_widget'):
+                    self.el_slider_widget.set_value(0)
 
         except Exception:
             self.current_az = 0.0
             self.current_el = 0.0
+
 
     def preview_satellite_position(self, sat_index):
         if not self.satellites or not self.observer or not self.ts:
