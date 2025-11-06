@@ -878,11 +878,13 @@ class satelliteapp:
             status_box = urwid.AttrMap(urwid.LineBox(urwid.Padding(self.status_text, align='center')), 'border')
             map_box = urwid.AttrMap(urwid.LineBox(urwid.Padding(self.map_text, align='center'), title="Equirectangular Projection"), 'border')
             metrics_box = urwid.AttrMap(urwid.LineBox(urwid.Padding(self.metrics_placeholder, align='center'), title="Live Telemetry"), 'border')
-            
+
+            # Make the Satellite Tracker window stretch to full height: keep a compact
+            # status row, and let map + metrics share the remaining space.
             content_pile = urwid.Pile([
                 ('pack', status_box),
-                ('pack', map_box),
-                ('weight', 1, metrics_box),
+                ('weight', 2, map_box),
+                ('weight', 3, metrics_box),
             ])
             
             self.info_content = content_pile
