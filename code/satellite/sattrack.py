@@ -190,28 +190,31 @@ class VerticalSlider(urwid.Pile):
             self._update_display()
     
     def _update_display(self, focus=False):
-        range_size = self.max_val - self.min_val
-        if range_size == 0:
-            progress = 0.5
-        else:
-            progress = (self.current_val - self.min_val) / range_size
-        
-        slider_pos = int((self.height - 3) * (1 - progress)) + 1  # +1 for top border
+        rng = self.max_val - self.min_val
+        progress = 0.5 if rng == 0 else (self.current_val - self.min_val) / rng
+        slider_pos = int((self.height - 3) * (1 - progress)) + 1
         slider_pos = max(1, min(self.height - 2, slider_pos))
-        
-        width = 9
+
+        width = 11
         for i, line in enumerate(self.slider_lines):
+            # Unicode box-drawing borders for a clean, continuous look
             if i == 0:
-                text = "â”Œ" + "â”€" * (width - 2) + "â”"
-            elif i == self.height - 1:
-                text = "â””" + "â”€" * (width - 2) + "â”˜"
-            elif i == slider_pos:
-                text = "â”‚" + "â–ˆ" * (width - 2) + "â”‚"
+                line.set_text([('slider', "┌" + "─" * (width - 2) + "┐")])
+                continue
+            if i == self.height - 1:
+                line.set_text([('slider', "└" + "─" * (width - 2) + "┘")])
+                continue
+            if i == slider_pos:
+                inner = width - 2
                 if focus:
-                    line.set_text([('slider_focus', text)])
-                    continue
-            else:
-                line.set_text([('slider', '│' + ' ' * (width - 2) + '│')])
+                    line.set_text([('slider', '│'), ('slider_focus', ' ' * inner), ('slider', '│')])
+                else:
+                    thickness = 5
+                    left = (inner - thickness) // 2
+                    right = inner - thickness - left
+                    line.set_text([('slider', '│' + (' ' * left)), ('slider_focus', ' ' * thickness), ('slider', (' ' * right) + '│')])
+                continue
+            line.set_text([('slider', '│' + ' ' * (width - 2) + '│')])
     
     def render(self, size, focus=False):
         self._update_display(focus)
@@ -415,7 +418,7 @@ def get_satellites(names):
                 used_names.add(line_name)
                 found = True
         if not found:
-            messages.append(f"[yellow]âš  '{name}' not found[/red]")
+            messages.append(f"[bright_yellow]'{name}' not found[/bright_yellow]")
     
     # sanitise color tags for 'not found' messages (fix mismatched closing tag)
     messages = [
@@ -606,7 +609,7 @@ class satelliteapp:
             score = scores.get(sat, 0)
             name = sat.name
             if sat == best_sat and score > 0:
-                parts.append(f"[green]{name} ({score:.1f}) â˜†[/green]")
+                parts.append(f"[green]{name} ({score:.1f}) +[/green]")
             elif score > 0:
                 parts.append(f"[dark_green]{name} ({score:.1f})[/dark_green]")
             else:
@@ -652,10 +655,10 @@ class satelliteapp:
                 next_pass_str = ">24h"
             
             metrics = [
-                ("Azimuth", f"{az.degrees:.1f}°"),
-                ("Elevation", f"{el.degrees:.1f}°"),
-                ("Latitude", f"{lat:.3f}°"),
-                ("Longitude", f"{lon:.3f}°"),
+                ("Azimuth", f"{az.degrees:.1f} deg"),
+                ("Elevation", f"{el.degrees:.1f} deg"),
+                ("Latitude", f"{lat:.3f} deg"),
+                ("Longitude", f"{lon:.3f} deg"),
                 ("Altitude", f"{alt:.1f} km"),
                 ("GC Distance", f"{gc_dist:.1f} km"),
                 ("SL Distance", f"{sl_dist:.1f} km"),
