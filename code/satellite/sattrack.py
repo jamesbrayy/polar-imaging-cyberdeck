@@ -22,7 +22,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 console = Console()
 tle_url = "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather"
 tle_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "satellites.txt")
-ui_update_interval = float(os.getenv("SATTRACK_UPDATE_INTERVAL", "0.05"))
+ui_update_interval = float(os.getenv("SATTRACK_UPDATE_INTERVAL", "0.1"))
 # Heavier map/telemetry update cadence separate from UI tick
 map_update_interval = float(os.getenv("SATTRACK_MAP_UPDATE_INTERVAL", "0.5"))
 map_forecast_points = int(os.getenv("SATTRACK_MAP_POINTS", "30"))
