@@ -1102,8 +1102,10 @@ class satelliteapp:
             self.refresh_decoder_header()
             title = "Decoder"
 
-        self.info_widget = urwid.AttrMap(urwid.LineBox(self.info_content, title=title), 'border')
-        self.main_content.original_widget = self.info_widget
+        outer = urwid.AttrMap(urwid.LineBox(self.info_content, title=title), 'border')
+        # filler forces the outline to occupy all available vertical space
+        self.main_content.original_widget = urwid.Filler(outer, valign='top')
+
 
     def show_loading_screen(self, messages, duration=2.0, title="Loading"):
         # Build a single urwid.Text markup list that can accept either a plain string
