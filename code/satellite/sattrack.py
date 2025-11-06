@@ -86,19 +86,15 @@ class SatellitePreviewButton(urwid.Button):
         return super().mouse_event(size, event, button, col, row, focus)
 
 def satellite_to_servo_coords(sat_az, sat_el):
-    # convert azimuth 0-360° to -180° to 180°
     if sat_az > 180:
         servo_az = sat_az - 360
     else:
         servo_az = sat_az
     
-    # map azimuth to servo range
     servo_az = max(-135, min(135, servo_az))
     
-    # convert elevation: 0-90° to -90° to 90°
     servo_el = sat_el - 90
     
-    # map elevation to safe servo range
     servo_el = max(-70, min(70, servo_el))
     
     return servo_az, servo_el
@@ -192,7 +188,6 @@ class VerticalSlider(urwid.Pile):
 
         width = 11
         for i, line in enumerate(self.slider_lines):
-            # Unicode box-drawing borders for a clean, continuous look
             if i == 0:
                 line.set_text([('slider', "┌" + "─" * (width - 2) + "┐")])
                 continue
@@ -275,7 +270,6 @@ class AsciiVerticalSlider(urwid.Pile):
 
         width = 11
         for i, line in enumerate(self.slider_lines):
-            # Unicode box-drawing borders for a clean, continuous look
             if i == 0:
                 line.set_text([('slider', "┌" + "─" * (width - 2) + "┐")])
                 continue
@@ -301,25 +295,21 @@ class AsciiVerticalSlider(urwid.Pile):
     def keypress(self, size, key):
         old_val = self.current_val
 
-        # basic steps
         if key == 'up':
             self.current_val = min(self.max_val, self.current_val + 1)
         elif key == 'down':
             self.current_val = max(self.min_val, self.current_val - 1)
 
-        # ±10 deg: support multiple terminals
         elif key in ('shift up', 'ctrl up', '+'):
             self.current_val = min(self.max_val, self.current_val + 10)
         elif key in ('shift down', 'ctrl down', '-'):
             self.current_val = max(self.min_val, self.current_val - 10)
 
-        # larger jumps
         elif key in ('page up',):
             self.current_val = min(self.max_val, self.current_val + 45)
         elif key in ('page down',):
             self.current_val = max(self.min_val, self.current_val - 45)
 
-        # bounds
         elif key == 'home':
             self.current_val = self.max_val
         elif key == 'end':
@@ -373,18 +363,14 @@ class LabeledSlider(urwid.Pile):
         def runner():
             for i in range(1, steps + 1):
                 v = start + delta * (i / float(steps))
-                # update the actual slider widget so it visibly moves
                 self.slider.set_value(v)
-                # keep the text synced
                 self.value_text.set_text(f"{v:.3f} deg")
-                # drive the servo callback gently
                 if self.callback:
                     try:
                         self.callback(v)
                     except Exception:
                         pass
                 time.sleep(step_dt)
-            # snap to exact target at the end
             self.slider.set_value(target)
             self.value_text.set_text(f"{target:.3f} deg")
             if self.callback:
@@ -395,7 +381,6 @@ class LabeledSlider(urwid.Pile):
         threading.Thread(target=runner, daemon=True).start()
 
     def keypress(self, size, key):
-        # space = smoothly return THIS slider to zero without abrupt servo motion
         if key == ' ':
             self.glide_to(target=0.0, seconds=3.0, steps=100)
             return None
@@ -463,7 +448,6 @@ def get_satellites(names):
         if not found:
             messages.append(f"[bright_yellow]'{name}' not found[/bright_yellow]")
     
-    # sanitise color tags for 'not found' messages (fix mismatched closing tag)
     messages = [
         m.replace("[/red]", "[/yellow]")
         if m.startswith("[yellow]") and "not found" in m else m
@@ -526,8 +510,6 @@ def latlon_to_map(lat, lon):
 def draw_map_frame(positions, satellites, ts, observer_lat, observer_lon):
     frame = [row.copy() for row in ascii_map]
     now = datetime.now(timezone.utc)
-    # Build a limited list of forecast times to lighten rendering
-    # Spread map_forecast_points across map_forecast_length minutes
     steps = max(1, map_forecast_points)
     step_min = map_forecast_length / max(1, steps - 1)
     forecast_times = [ts.utc(now + timedelta(minutes=i * step_min)) for i in range(steps)]
@@ -635,26 +617,23 @@ class satelliteapp:
         self.hover_satellite_index = None
         self.tracking_locked = False
         self.locked_satellite_index = None
-        self._glide_state = None  # {"t0":..., "dur":..., "start_az":..., "start_el":..., "target_az":..., "target_el":...}
+        self._glide_state = None
 
-        # servo glide state
         self._glide_thread = None
         self._glide_gen = 0
         self._auto_prev = False
         self.last_tracked_index = None
 
-        # persistent decoder ui
         self.decoder_ui = None
         self.dec_target_text = None
         self.dec_status = None
         self.dec_log = None
         self.dec_imgs = None
 
-        # Background compute cache/state
         self._bg_computing = False
         self._bg_result = None
         self._last_map_update = 0.0
-        self._next_pass_cache = {}  # sat.name -> (timestamp, seconds)
+        self._next_pass_cache = {}
 
         self.auto_tracking_enabled = False
         self.selected_satellite_index = 0
@@ -662,19 +641,17 @@ class satelliteapp:
         self.current_el = 0.0
         self.auto_tracking_focused = False
 
-        # satdump autotrack state
         base_dir = Path(os.path.dirname(os.path.abspath(__file__)))
         self.autotrack_cfg = base_dir / "autotrack_runtime.json"
         self.autotrack_out = base_dir / "satdump_out"
         self.autotrack_runner = None
         self.autotrack_seen = set()
         self.autotrack_last_images = []
-        self.autotrack_sdr = "rtlsdr"          # or "rtl_tcp" / "soapy"
-        self.autotrack_samplerate = 2_400_000  # safe default
-        self.autotrack_gain = None             # set a number to force manual gain
+        self.autotrack_sdr = "rtlsdr"
+        self.autotrack_samplerate = 2_400_000
+        self.autotrack_gain = None
 
     def create_decoder_widget(self):
-        # build once; reuse across tab switches so content does not disappear
         if self.decoder_ui is not None:
             return self.decoder_ui
 
@@ -726,10 +703,8 @@ class satelliteapp:
 
     def _start_glide_to(self, target_az, target_el, seconds=2.0):
         import time
-        # clamp targets
         target_az = max(-135.0, min(135.0, float(target_az)))
         target_el = max(-90.0,  min(90.0,  float(target_el)))
-        # current servo angles as start
         start_az = float(getattr(self.servo_controller, "azimuth_angle", 0.0))
         start_el = float(getattr(self.servo_controller, "elevation_angle", 0.0))
         self._glide_state = {
@@ -759,7 +734,6 @@ class satelliteapp:
             v_az = gs["start_az"] + (gs["target_az"] - gs["start_az"]) * alpha
             v_el = gs["start_el"] + (gs["target_el"] - gs["start_el"]) * alpha
 
-        # drive hardware and sliders
         self.servo_controller.set_azimuth(v_az)
         self.servo_controller.set_elevation(v_el)
         if hasattr(self, 'az_slider_widget'):
@@ -828,7 +802,6 @@ class satelliteapp:
                 rv = diff.at(t).velocity.m_per_s
                 speed = (rv[0]**2 + rv[1]**2 + rv[2]**2)**0.5
 
-                # Cache next pass computation per satellite to avoid heavy recalculation every tick
                 np_key = sat.name
                 now_ts = time.time()
                 cache_entry = self._next_pass_cache.get(np_key)
@@ -856,7 +829,6 @@ class satelliteapp:
         self.observer = Topos(latitude_degrees=self.observer_lat, longitude_degrees=self.observer_lon)
         self.ts = load.timescale()
 
-        # If user asks for 'best', auto-pick the top 4 satellites by score from the full TLE list
         if len(names) == 1 and names[0].strip().lower() == 'best':
             try:
                 lines = open(tle_file, encoding='utf-8').read().splitlines()
@@ -886,13 +858,11 @@ class satelliteapp:
             picked_names = ", ".join(s.name for s in picked) if picked else "none"
             return [f"[white]Auto-selected best: {picked_names}[/white]"]
 
-        # Otherwise, load the requested satellites by name (up to 8)
         self.satellites, messages = get_satellites(names)
         return messages
 
     def _haversine_km(self, lat1, lon1, lat2, lon2):
         """Fast spherical great-circle distance (approximate) in kilometers."""
-        # convert decimal degrees to radians
         rlat1, rlon1, rlat2, rlon2 = map(math.radians, [lat1, lon1, lat2, lon2])
         dlat = rlat2 - rlat1
         dlon = rlon2 - rlon1
@@ -985,11 +955,9 @@ class satelliteapp:
 
     def toggle_auto_tracking(self, button):
         self.auto_tracking_enabled = not self.auto_tracking_enabled
-        # track state edge for update loop
         prev = self._auto_prev
         self._auto_prev = self.auto_tracking_enabled
 
-        # if just enabled and we have a locked target, glide once to its current position
         if self.auto_tracking_enabled and self.tracking_locked and self.locked_satellite_index is not None and self.satellites:
             idx = min(self.locked_satellite_index, len(self.satellites)-1)
             now = datetime.now(timezone.utc)
@@ -1005,24 +973,19 @@ class satelliteapp:
         self.update_servo_display()
     
     def select_satellite(self, button, sat_index):
-        # cannot change lock while auto track is enabled
         if self.auto_tracking_enabled:
             if hasattr(self, 'auto_status_text'):
                 self.auto_status_text.set_text("Auto Tracking: ENABLED (disable to change target)")
             return
 
         if self.tracking_locked and getattr(self, "locked_satellite_index", None) == sat_index:
-            # unlock
             self.tracking_locked = False
             self.locked_satellite_index = None
         else:
-            # lock to this satellite
             self.selected_satellite_index = sat_index
             self.tracking_locked = True
             self.locked_satellite_index = sat_index
-            # keep hover in sync for ui, but do not move sliders here
             self.hover_satellite_index = sat_index
-            # update preview text to the locked satellite
             self.current_az, self.current_el = self.preview_satellite_position(sat_index)
 
         self.update_servo_display()
@@ -1034,12 +997,10 @@ class satelliteapp:
         if self.selected_satellite_index >= len(self.satellites):
             self.selected_satellite_index = 0
 
-        # if a glide is active, advance it and skip any direct writes this tick
         if self._step_glide():
             return
 
         try:
-            # only track when autotrack is enabled AND a satellite is locked
             if not (self.auto_tracking_enabled and self.tracking_locked and self.locked_satellite_index is not None):
                 self._auto_prev = False
                 self.last_tracked_index = None
@@ -1055,26 +1016,20 @@ class satelliteapp:
             diff = sat - self.observer
             el, az, _ = diff.at(t).altaz()
 
-            # update displayed az/el to the locked target
             self.current_az = az.degrees
             self.current_el = el.degrees
 
-            # convert to servo coordinates
             servo_az, servo_el = satellite_to_servo_coords(self.current_az, self.current_el)
 
-            # detect autonomous jump (autotrack just enabled or target changed)
             jump = (self.last_tracked_index != idx) or (not self._auto_prev and self.auto_tracking_enabled)
 
-            # remember for next tick
             self._auto_prev = self.auto_tracking_enabled
             self.last_tracked_index = idx
 
             if jump:
-                # start a glide and let the next ticks advance it
                 self._start_glide_to(servo_az, servo_el, seconds=2.0)
                 return
 
-            # regular tracking updates (small deltas), no glide
             if self.current_el > 0 and servo_el >= -70:
                 self.servo_controller.set_azimuth(servo_az)
                 self.servo_controller.set_elevation(servo_el)
@@ -1083,7 +1038,6 @@ class satelliteapp:
                 if hasattr(self, 'el_slider_widget'):
                     self.el_slider_widget.set_value(servo_el)
             else:
-                # park elevation safely if below horizon
                 self.servo_controller.set_elevation(0)
                 if hasattr(self, 'el_slider_widget'):
                     self.el_slider_widget.set_value(0)
@@ -1128,7 +1082,6 @@ class satelliteapp:
             self.position_text.set_text(f"Az: {self.current_az:.3f} deg | El: {self.current_el:.3f} deg")
     
     def create_auto_tracking_widget(self):
-        # Auto tracking toggle button
         toggle_text = "DISABLE Auto Track" if self.auto_tracking_enabled else "ENABLE Auto Track"
         self.auto_toggle_btn = urwid.AttrMap(
             urwid.Button(toggle_text, on_press=self.toggle_auto_tracking),
@@ -1159,7 +1112,6 @@ class satelliteapp:
                 except Exception:
                     sat_idx = pos
 
-                # only update preview when not locked; never move sliders here
                 if not self.tracking_locked:
                     self.hover_satellite_index = sat_idx
                     self.current_az, self.current_el = self.preview_satellite_position(sat_idx)
@@ -1188,7 +1140,6 @@ class satelliteapp:
         return urwid.AttrMap(urwid.LineBox(auto_pile, title="Auto Tracking"), 'border')
 
     def preview_satellite(self, sat_index):
-        # ignore hover while locked
         if self.tracking_locked:
             return
         self.hover_satellite_index = sat_index
@@ -1270,7 +1221,6 @@ class satelliteapp:
             map_box = urwid.AttrMap(urwid.LineBox(urwid.Padding(self.map_text, align='center'), title="Equirectangular Projection"), 'border')
             metrics_box = urwid.AttrMap(urwid.LineBox(urwid.Padding(self.metrics_placeholder, align='center'), title="Live Telemetry"), 'border')
 
-            # build content, then wrap in Filler so it stretches vertically like the servo tab
             content_pile = urwid.Pile([
                 ('pack', status_box),
                 ('weight', 2, map_box),
@@ -1280,12 +1230,10 @@ class satelliteapp:
             title = "Satellite Tracker"
 
         elif self.current_mode == "servo_control":
-            # do NOT wrap; the ListBox already fills the space
             self.info_content = self.create_servo_control_widget()
             title = "Servo Control"
 
-        else:  # decoder
-            # reuse the persistent decoder ui and wrap in Filler so it stretches
+        else:
             dec = self.create_decoder_widget()
             self.refresh_decoder_header()
             self.info_content = urwid.Filler(dec, valign='top')
@@ -1296,8 +1244,6 @@ class satelliteapp:
 
 
     def show_loading_screen(self, messages, duration=2.0, title="Loading"):
-        # Build a single urwid.Text markup list that can accept either a plain string
-        # title, a string with markup tags, or an already-parsed markup list/tuples.
         segments = []
         if title:
             if isinstance(title, (list, tuple)):
@@ -1319,7 +1265,6 @@ class satelliteapp:
                 segments.extend(parse_colours(m))
 
         text_widget = urwid.Text(segments or "", align='center')
-        # Default to green text if no explicit colour was supplied in segments
         text_widget = urwid.AttrMap(text_widget, 'green')
         box = urwid.LineBox(urwid.Padding(text_widget, left=2, right=2))
         box = urwid.AttrMap(box, 'border')
@@ -1349,7 +1294,6 @@ class satelliteapp:
             finally:
                 messages_holder["done"] = True
 
-        # UI elements (title can be plain string, string with markup, or parsed list)
         if isinstance(title, (list, tuple)):
             header_text = urwid.Text(title, align='center')
         elif isinstance(title, str) and ('[' in title and ']' in title):
@@ -1371,7 +1315,6 @@ class satelliteapp:
         def poll(loop, data):
             if messages_holder["done"]:
                 raise urwid.ExitMainLoop()
-            # simple spinner tick
             spinner_text.set_text(spinner_text.text + '.')
             loop.set_alarm_in(0.2, poll)
 
@@ -1401,14 +1344,12 @@ class satelliteapp:
                 self.loop.set_alarm_in(self.update_interval, lambda loop, data: self.update_display())
             return
 
-        # Start background compute if stale/not running
         now_ts = time.time()
         if (not self._bg_computing and
             (self._bg_result is None or (now_ts - self._last_map_update) >= self.map_update_interval)):
             self._bg_computing = True
             threading.Thread(target=self._compute_satellite_frame_bg, daemon=True).start()
 
-        # Apply latest cached results if any
         if self._bg_result is not None:
             scores = self._bg_result['scores']
             best_sat = self._bg_result['best_sat']
@@ -1425,7 +1366,6 @@ class satelliteapp:
             self.map_text.set_text(parse_colours(map_display))
             self.metrics_placeholder.original_widget = metrics
         
-        # decoder tab live updates
         if self.current_mode == "decoder":
             if self.autotrack_runner and self.autotrack_runner.alive:
                 if self.autotrack_runner.get_new_lines():
@@ -1519,7 +1459,6 @@ class satelliteapp:
         if not self.satellites:
             self.show_loading_screen(["[red]No satellites found[/red]"], duration=5.0, title="")
             return
-        # Block until the first map/telemetry frame is computed
         self.show_loading_task(lambda: (self._compute_satellite_frame_bg() or ["[green]Map ready[/green]"]), title=parse_colours("[white]Preparing map[/white]"))
         self.running = True
         self.loop = urwid.MainLoop(self.create_main_widget(), palette=palette, unhandled_input=self.unhandled_input)
