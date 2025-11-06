@@ -1074,7 +1074,7 @@ class satelliteapp:
             self.show_loading_screen(["[bright_red]�o- No satellites found[/bright_red]"], duration=5.0, title="")
             return
         # Block until the first map/telemetry frame is computed
-        self.show_loading_task(lambda: (self._compute_satellite_frame_bg() or ["[green]Map ready[/green]"]), title="Preparing map")
+        self.show_loading_task(lambda: (self._compute_satellite_frame_bg() or ["[white]Map ready[/white]"]), title="Preparing map")
         self.running = True
         self.loop = urwid.MainLoop(self.create_main_widget(), palette=palette, unhandled_input=self.unhandled_input)
         self.loop.set_alarm_in(self.update_interval, lambda loop, data: self.update_display())
