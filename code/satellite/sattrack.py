@@ -892,20 +892,19 @@ class satelliteapp:
         self.update_servo_display()
     
     def select_satellite(self, button, sat_index):
+        # toggle lock on the currently selected item
         if self.tracking_locked and self.selected_satellite_index == sat_index:
-            # unlock on second select of the same satellite
             self.tracking_locked = False
         else:
-            # lock to the newly selected satellite
             self.selected_satellite_index = sat_index
             self.tracking_locked = True
+            # keep hover in sync so the label never lags one behind
+            self.hover_satellite_index = sat_index
 
-        # refresh the displayed az/el based on the active reference
-        if self.tracking_locked:
-            idx = self.selected_satellite_index
-        else:
-            idx = self.hover_satellite_index if self.hover_satellite_index is not None else self.selected_satellite_index
-
+        # choose the active index and refresh display
+        idx = self.selected_satellite_index if self.tracking_locked else (
+            self.hover_satellite_index if self.hover_satellite_index is not None else self.selected_satellite_index
+        )
         self.current_az, self.current_el = self.preview_satellite_position(idx)
         self.update_servo_display()
     
@@ -996,7 +995,7 @@ class satelliteapp:
 
         self.auto_status_text = urwid.Text("Auto Tracking: DISABLED", align='center')
         self.selected_sat_text = urwid.Text("Target: None", align='center')
-        self.position_text = urwid.Text("Az: 0.000 ° | El: 0.000 °", align='center')
+        self.position_text = urwid.Text("Az: 0 ° | El: 0 °", align='center')
 
         sat_buttons = []
         for i, sat in enumerate(self.satellites):
@@ -1026,6 +1025,9 @@ class satelliteapp:
         return urwid.AttrMap(urwid.LineBox(auto_pile, title="Auto Tracking"), 'border')
 
     def preview_satellite(self, sat_index):
+        # ignore hover while locked
+        if self.tracking_locked:
+            return
         self.hover_satellite_index = sat_index
         self.current_az, self.current_el = self.preview_satellite_position(sat_index)
         self.update_servo_display()
