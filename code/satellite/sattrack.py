@@ -589,8 +589,40 @@ class satelliteapp:
     def setup_data(self, names, coords):
         self.observer_lat, self.observer_lon = map(float, coords.split())
         self.observer = Topos(latitude_degrees=self.observer_lat, longitude_degrees=self.observer_lon)
-        self.satellites, messages = get_satellites(names)
         self.ts = load.timescale()
+
+        # If user asks for 'best', auto-pick the top 4 satellites by score from the full TLE list
+        if len(names) == 1 and names[0].strip().lower() == 'best':
+            try:
+                lines = open(tle_file, encoding='utf-8').read().splitlines()
+            except FileNotFoundError:
+                self.satellites = []
+                return ["[bright_red]TLE file not found[/bright_red]"]
+
+            all_sats = []
+            for i in range(0, len(lines) - 2, 3):
+                n = lines[i].strip()
+                l1 = lines[i+1].strip() if i+1 < len(lines) else None
+                l2 = lines[i+2].strip() if i+2 < len(lines) else None
+                if l1 and l2 and l1.startswith('1 ') and l2.startswith('2 '):
+                    try:
+                        all_sats.append(EarthSatellite(l1, l2, n))
+                    except Exception:
+                        pass
+
+            if not all_sats:
+                self.satellites = []
+                return ["[bright_red]No satellites parsed from TLE file[/bright_red]"]
+
+            scores, _ = select_best_satellite(all_sats, self.observer, self.ts)
+            ranked = [s for s in sorted(all_sats, key=lambda s: scores.get(s, 0), reverse=True) if scores.get(s, 0) > 0]
+            picked = ranked[:4]
+            self.satellites = picked
+            picked_names = ", ".join(s.name for s in picked) if picked else "none"
+            return [f"[white]Auto-selected best: {picked_names}[/white]"]
+
+        # Otherwise, load the requested satellites by name (up to 8)
+        self.satellites, messages = get_satellites(names)
         return messages
 
     def _haversine_km(self, lat1, lon1, lat2, lon2):
