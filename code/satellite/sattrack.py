@@ -888,25 +888,28 @@ class satelliteapp:
         self.update_servo_display()
     
     def select_satellite(self, button, sat_index):
-        # toggle lock if clicking the same one; otherwise lock new one
-        if self.tracking_locked and self.locked_satellite_index == sat_index:
+        # cannot change lock while auto track is enabled
+        if self.auto_tracking_enabled:
+            if hasattr(self, 'auto_status_text'):
+                self.auto_status_text.set_text("Auto Tracking: ENABLED (disable to change target)")
+            return
+
+        if self.tracking_locked and getattr(self, "locked_satellite_index", None) == sat_index:
+            # unlock
             self.tracking_locked = False
             self.locked_satellite_index = None
         else:
+            # lock to this satellite
             self.selected_satellite_index = sat_index
             self.tracking_locked = True
             self.locked_satellite_index = sat_index
-            # keep hover in sync to avoid any off-by-one visuals
+            # keep hover in sync for ui, but do not move sliders here
             self.hover_satellite_index = sat_index
+            # update preview text to the locked satellite
+            self.current_az, self.current_el = self.preview_satellite_position(sat_index)
 
-        # choose active index explicitly
-        if self.tracking_locked and self.locked_satellite_index is not None:
-            idx = self.locked_satellite_index
-        else:
-            idx = self.hover_satellite_index if self.hover_satellite_index is not None else self.selected_satellite_index
-
-        self.current_az, self.current_el = self.preview_satellite_position(idx)
         self.update_servo_display()
+
     
     def update_satellite_position(self):
         if not self.satellites or not self.observer or not self.ts:
@@ -915,21 +918,41 @@ class satelliteapp:
         if self.selected_satellite_index >= len(self.satellites):
             self.selected_satellite_index = 0
 
-        # explicit active index to avoid off-by-one
-        if self.tracking_locked and self.locked_satellite_index is not None:
-            idx = self.locked_satellite_index
-        else:
-            idx = self.hover_satellite_index if (self.hover_satellite_index is not None and self.hover_satellite_index < len(self.satellites)) else self.selected_satellite_index
-
         try:
-            sat = self.satellites[idx]
-            now = datetime.now(timezone.utc)
-            t = self.ts.from_datetime(now)
-            diff = sat - self.observer
-            el, az, _ = diff.at(t).altaz()
+            # choose index for tracking vs preview
+            if self.auto_tracking_enabled and self.tracking_locked and self.locked_satellite_index is not None:
+                idx = self.locked_satellite_index
+                sat = self.satellites[idx]
+                now = datetime.now(timezone.utc)
+                t = self.ts.from_datetime(now)
+                diff = sat - self.observer
+                el, az, _ = diff.at(t).altaz()
 
-            self.current_az = az.degrees
-            self.current_el = el.degrees
+                # update display to locked values
+                self.current_az = az.degrees
+                self.current_el = el.degrees
+
+                # drive servos and sliders only in auto mode, locked
+                servo_az, servo_el = satellite_to_servo_coords(self.current_az, self.current_el)
+                if self.current_el > 0 and servo_el >= -70:
+                    self.servo_controller.set_azimuth(servo_az)
+                    self.servo_controller.set_elevation(servo_el)
+                    if hasattr(self, 'az_slider_widget'):
+                        self.az_slider_widget.set_value(servo_az)
+                    if hasattr(self, 'el_slider_widget'):
+                        self.el_slider_widget.set_value(servo_el)
+                else:
+                    self.servo_controller.set_elevation(0)
+                    if hasattr(self, 'el_slider_widget'):
+                        self.el_slider_widget.set_value(0)
+            else:
+                # not auto-tracking locked: do not move servos or sliders
+                # keep preview text responsive to hover (already handled in preview_satellite)
+                pass
+
+        except Exception:
+            self.current_az = 0.0
+            self.current_el = 0.0
 
             if self.auto_tracking_enabled:  # convert to servo coordinate system
                 servo_az, servo_el = satellite_to_servo_coords(self.current_az, self.current_el)
@@ -973,16 +996,14 @@ class satelliteapp:
             status = "ENABLED" if self.auto_tracking_enabled else "DISABLED"
             self.auto_status_text.set_text(f"Auto Tracking: {status}")
 
-        # pick the same active index used everywhere else
-        if self.tracking_locked and self.locked_satellite_index is not None:
-            idx = self.locked_satellite_index
-            locked_suffix = " [locked]"
-        else:
-            idx = self.hover_satellite_index if (self.hover_satellite_index is not None and self.hover_satellite_index < len(self.satellites)) else self.selected_satellite_index
-            locked_suffix = ""
-
-        if hasattr(self, 'selected_sat_text') and self.satellites and 0 <= idx < len(self.satellites):
-            self.selected_sat_text.set_text(f"Target: {self.satellites[idx].name}{locked_suffix}")
+        if hasattr(self, 'selected_sat_text') and self.satellites:
+            if self.tracking_locked and self.locked_satellite_index is not None and self.locked_satellite_index < len(self.satellites):
+                name = self.satellites[self.locked_satellite_index].name
+                self.selected_sat_text.set_text(f"Target: {name} [locked]")
+            else:
+                idx = self.hover_satellite_index if (self.hover_satellite_index is not None and self.hover_satellite_index < len(self.satellites)) else self.selected_satellite_index
+                name = self.satellites[idx].name
+                self.selected_sat_text.set_text(f"Target: {name}")
 
         if hasattr(self, 'position_text'):
             self.position_text.set_text(f"Az: {self.current_az:.3f} deg | El: {self.current_el:.3f} deg")
@@ -1012,38 +1033,26 @@ class satelliteapp:
             _orig_set_focus = sat_walker.set_focus
             def _set_focus_and_preview(pos):
                 _orig_set_focus(pos)
-                # extract the true sat_index from the focused button (unwrap AttrMap → Button)
                 try:
                     btn = sat_walker[pos]
-                    # if wrapped in AttrMap, unwrap to the original SatellitePreviewButton
                     core = getattr(btn, "original_widget", btn)
                     sat_idx = getattr(core, "sat_index", pos)
                 except Exception:
                     sat_idx = pos
 
-                # update hover to the true index, then recompute and refresh
-                self.hover_satellite_index = sat_idx
-                self.current_az, self.current_el = self.preview_satellite_position(sat_idx)
-                self.update_servo_display()
-
-                # immediately sync sliders/servo if you’re in this tab
-                # ensures they match the newly focused satellite without waiting for the timer tick
-                if hasattr(self, "az_slider_widget") and hasattr(self, "el_slider_widget"):
-                    servo_az, servo_el = satellite_to_servo_coords(self.current_az, self.current_el)
-                    self.az_slider_widget.set_value(servo_az)
-                    self.el_slider_widget.set_value(servo_el)
+                # only update preview when not locked; never move sliders here
+                if not self.tracking_locked:
+                    self.hover_satellite_index = sat_idx
+                    self.current_az, self.current_el = self.preview_satellite_position(sat_idx)
+                    self.update_servo_display()
 
             sat_walker.set_focus = _set_focus_and_preview
-
-            # ensure initial focus uses the true sat_index as well
             if len(sat_walker):
                 _set_focus_and_preview(0)
 
             sat_listbox = urwid.BoxAdapter(urwid.ListBox(sat_walker), height=6)
         else:
             sat_listbox = urwid.Text("No satellites available", align='center')
-
-
 
         auto_pile = urwid.Pile([
             ('pack', urwid.Divider()),
