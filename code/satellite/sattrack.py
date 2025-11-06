@@ -1085,10 +1085,10 @@ class satelliteapp:
             self.running = False
         finally:
             try:
-                if hasattr(self, 'loop') and hasattr(self.loop, 'screen'):
-                    # Ask urwid to clear and restore terminal
-                    self.loop.screen.clear()
-                    self.loop.screen.stop()
+                if os.name == 'nt':
+                    os.system('cls')
+                else:
+                    os.system('clear')
             except Exception:
                 pass
 
