@@ -328,7 +328,7 @@ class LabeledSlider(urwid.Pile):
     def __init__(self, min_val, max_val, initial_val, callback, title):
         self.slider = AsciiVerticalSlider(min_val, max_val, initial_val, self._on_change, title)
         self.callback = callback
-        self.value_text = urwid.Text(f"{initial_val} °", align='center')
+        self.value_text = urwid.Text(f"{initial_val:.3f} °", align='center')
         self.title_text = urwid.Text(title, align='center')
         
         super().__init__([
@@ -343,10 +343,10 @@ class LabeledSlider(urwid.Pile):
     
     def set_value(self, value):
         self.slider.set_value(value)
-        self.value_text.set_text(f"{value} °")
+        self.value_text.set_text(f"{value:.3f} °")
     
     def _on_change(self, value):
-        self.value_text.set_text(f"{value} °")
+        self.value_text.set_text(f"{value:.3f} °")
         if self.callback:
             self.callback(value)
     
