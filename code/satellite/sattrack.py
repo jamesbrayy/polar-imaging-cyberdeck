@@ -636,23 +636,23 @@ class satelliteapp:
         self.dec_target_text = urwid.Text(f"target satellite: {sel}")
 
         info = urwid.Pile([
-            ('pack', urwid.Text("satdump autotrack (uses satdump db)", align='center')),
+            ('pack', urwid.Text("Satdump Decoding", align='center')),
             ('pack', urwid.Divider()),
             ('pack', self.dec_target_text),
-            ('pack', urwid.Text(f"sdr: {self.autotrack_sdr}  samplerate: {self.autotrack_samplerate}")),
-            ('pack', urwid.Text(f"output: {str(self.autotrack_out)}")),
+            ('pack', urwid.Text(f"SDR: {self.autotrack_sdr}  samplerate: {self.autotrack_samplerate}")),
+            ('pack', urwid.Text(f"Output: {str(self.autotrack_out)}")),
             ('pack', urwid.Divider()),
             ('pack', urwid.Columns([
-                urwid.AttrMap(urwid.Button("start", on_press=self.autotrack_start), 'button', 'button_focus'),
-                urwid.AttrMap(urwid.Button("stop", on_press=self.autotrack_stop), 'button', 'button_focus'),
+                urwid.AttrMap(urwid.Button("Start", on_press=self.autotrack_start), 'button', 'button_focus'),
+                urwid.AttrMap(urwid.Button("Stop", on_press=self.autotrack_stop), 'button', 'button_focus'),
             ], dividechars=2)),
             ('pack', urwid.Divider()),
-            ('pack', urwid.Text("status:")),
+            ('pack', urwid.Text("Status:")),
             ('pack', self.dec_status),
         ])
 
-        log_box = urwid.LineBox(urwid.Filler(self.dec_log, valign='top'), title="satdump output")
-        img_box = urwid.LineBox(urwid.Filler(self.dec_imgs, valign='top'), title="new images")
+        log_box = urwid.LineBox(urwid.Filler(self.dec_log, valign='top'), title="SatDump Output")
+        img_box = urwid.LineBox(urwid.Filler(self.dec_imgs, valign='top'), title="New Images")
 
         self.decoder_ui = urwid.Columns([
             ('weight', 2, info),
@@ -669,11 +669,11 @@ class satelliteapp:
         if self.satellites:
             idx = min(self.selected_satellite_index, len(self.satellites) - 1)
             sel = self.satellites[idx].name
-        self.dec_target_text.set_text(f"target satellite: {sel}")
+        self.dec_target_text.set_text(f"Target Satellite: {sel}")
 
     def autotrack_start(self, button):
         if not self.satellites:
-            self.dec_status.set_text("no satellites loaded")
+            self.dec_status.set_text("No satellites loaded.")
             return
         idx = min(self.selected_satellite_index, len(self.satellites) - 1)
         sat_name = self.satellites[idx].name
@@ -694,13 +694,13 @@ class satelliteapp:
         self.autotrack_out.mkdir(parents=True, exist_ok=True)
         self.autotrack_runner = runner
         self.autotrack_runner.start()
-        self.dec_status.set_text("running (autotrack)")
+        self.dec_status.set_text("Running")
 
     def autotrack_stop(self, button):
         if self.autotrack_runner:
             self.autotrack_runner.stop()
             self.autotrack_runner = None
-        self.dec_status.set_text("stopped")
+        self.dec_status.set_text("Stopped")
 
     def _compute_satellite_frame_bg(self):
         """Compute scores, telemetry, and map in a background thread.
@@ -1087,24 +1087,30 @@ class satelliteapp:
             status_box = urwid.AttrMap(urwid.LineBox(urwid.Padding(self.status_text, align='center')), 'border')
             map_box = urwid.AttrMap(urwid.LineBox(urwid.Padding(self.map_text, align='center'), title="Equirectangular Projection"), 'border')
             metrics_box = urwid.AttrMap(urwid.LineBox(urwid.Padding(self.metrics_placeholder, align='center'), title="Live Telemetry"), 'border')
+
+            # build content, then wrap in Filler so it stretches vertically like the servo tab
             content_pile = urwid.Pile([
                 ('pack', status_box),
                 ('weight', 2, map_box),
                 ('weight', 3, metrics_box),
             ])
-            self.info_content = content_pile
+            self.info_content = urwid.Filler(content_pile, valign='top')
             title = "Satellite Tracker"
+
         elif self.current_mode == "servo_control":
+            # do NOT wrap; the ListBox already fills the space
             self.info_content = self.create_servo_control_widget()
             title = "Servo Control"
-        else:
-            self.info_content = self.create_decoder_widget()  # reuse, no reset
+
+        else:  # decoder
+            # reuse the persistent decoder ui and wrap in Filler so it stretches
+            dec = self.create_decoder_widget()
             self.refresh_decoder_header()
+            self.info_content = urwid.Filler(dec, valign='top')
             title = "Decoder"
 
-        outer = urwid.AttrMap(urwid.LineBox(self.info_content, title=title), 'border')
-        # filler forces the outline to occupy all available vertical space
-        self.main_content.original_widget = urwid.Filler(outer, valign='top')
+        self.info_widget = urwid.AttrMap(urwid.LineBox(self.info_content, title=title), 'border')
+        self.main_content.original_widget = self.info_widget
 
 
     def show_loading_screen(self, messages, duration=2.0, title="Loading"):
