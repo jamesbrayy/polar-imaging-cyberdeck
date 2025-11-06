@@ -1,11 +1,11 @@
 ﻿from skyfield.api import EarthSatellite, load, Topos, wgs84
-from geopy.distance import geodesic
 from datetime import datetime, timezone, timedelta
 import requests, time, urllib3, re, os, threading, math
 import numpy as np
 import urwid
-from rich.prompt import Prompt
 from rich.console import Console
+import subprocess, queue, json
+from pathlib import Path
 
 try:
     from gpiozero import AngularServo
@@ -507,6 +507,74 @@ def draw_map_frame(positions, satellites, ts, observer_lat, observer_lon):
     
     return "\n".join("".join(row) for row in frame)
 
+class AutoTrackRunner:
+    def __init__(self, cfg_path: Path):
+        self.cfg_path = Path(cfg_path)
+        self.proc = None
+        self.q = queue.Queue()
+        self.alive = False
+        self._tail = []
+
+    def write_config(self, *, sta_lat, sta_lon, sta_alt_m=0, sat_names, sdr="rtlsdr",
+                     samplerate=2_400_000, gain_db=None, record=False, out_dir=None):
+        cfg = {
+            "station": {"latitude": sta_lat, "longitude": sta_lon, "altitude": sta_alt_m},
+            "scheduler": {
+                "min_elevation": 10,
+                "satellites": [{"name": n} for n in sat_names]
+            },
+            "sdr": {
+                "source": sdr,
+                "samplerate": samplerate
+            },
+            "processing": {
+                "enable_recording": bool(record),
+            }
+        }
+        if out_dir:
+            cfg["processing"]["output_directory"] = str(out_dir)
+        if gain_db is not None:
+            cfg["sdr"]["general_gain"] = gain_db
+        self.cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        self.cfg_path.write_text(json.dumps(cfg, indent=2))
+
+    def start(self):
+        cmd = ["satdump", "autotrack", str(self.cfg_path)]
+        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        self.alive = True
+
+        def reader():
+            for line in self.proc.stdout:
+                line = line.rstrip()
+                self._tail.append(line)
+                if len(self._tail) > 400:
+                    self._tail = self._tail[-400:]
+                self.q.put(line)
+            self.alive = False
+
+        threading.Thread(target=reader, daemon=True).start()
+
+    def stop(self):
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+        self.alive = False
+
+    def get_new_lines(self, max_n=100):
+        out = []
+        try:
+            while len(out) < max_n:
+                out.append(self.q.get_nowait())
+        except queue.Empty:
+            pass
+        return out
+
+    def tail_text(self, n=200):
+        return "\n".join(self._tail[-n:])
+
 class satelliteapp:
     def __init__(self):
         self.loop = None
@@ -534,6 +602,83 @@ class satelliteapp:
         self.current_el = 0.0
         self.auto_tracking_focused = False
 
+        # satdump autotrack state
+        base_dir = Path(os.path.dirname(os.path.abspath(__file__)))
+        self.autotrack_cfg = base_dir / "autotrack_runtime.json"
+        self.autotrack_out = base_dir / "satdump_out"
+        self.autotrack_runner = None
+        self.autotrack_seen = set()
+        self.autotrack_last_images = []
+        self.autotrack_sdr = "rtlsdr"          # or "rtl_tcp" / "soapy"
+        self.autotrack_samplerate = 2_400_000  # safe default
+        self.autotrack_gain = None             # set a number to force manual gain
+
+    def create_decoder_widget(self):
+        sel = "None"
+        if self.satellites:
+            idx = min(self.selected_satellite_index, len(self.satellites) - 1)
+            sel = self.satellites[idx].name
+
+        self.dec_status = urwid.Text("", align='left')
+        self.dec_log = urwid.Text("", align='left')
+        self.dec_imgs = urwid.Text("", align='left')
+
+        info = urwid.Pile([
+            ('pack', urwid.Text("satdump autotrack (uses satdump db)", align='center')),
+            ('pack', urwid.Divider()),
+            ('pack', urwid.Text(f"target satellite: {sel}")),
+            ('pack', urwid.Text(f"sdr: {self.autotrack_sdr}  samplerate: {self.autotrack_samplerate}")),
+            ('pack', urwid.Text(f"output: {str(self.autotrack_out)}")),
+            ('pack', urwid.Divider()),
+            ('pack', urwid.Columns([
+                urwid.AttrMap(urwid.Button("start", on_press=self.autotrack_start), 'button', 'button_focus'),
+                urwid.AttrMap(urwid.Button("stop", on_press=self.autotrack_stop), 'button', 'button_focus'),
+            ], dividechars=2)),
+            ('pack', urwid.Divider()),
+            ('pack', urwid.Text("status:")),
+            ('pack', self.dec_status),
+        ])
+
+        log_box = urwid.LineBox(urwid.Filler(self.dec_log, valign='top'), title="satdump output")
+        img_box = urwid.LineBox(urwid.Filler(self.dec_imgs, valign='top'), title="new images")
+
+        return urwid.Columns([
+            ('weight', 2, info),
+            ('weight', 3, log_box),
+            ('weight', 2, img_box),
+        ], dividechars=1)
+
+    def autotrack_start(self, button):
+        if not self.satellites:
+            self.dec_status.set_text("no satellites loaded")
+            return
+        idx = min(self.selected_satellite_index, len(self.satellites) - 1)
+        sat_name = self.satellites[idx].name
+
+        runner = AutoTrackRunner(self.autotrack_cfg)
+        runner.write_config(
+            sta_lat=self.observer.latitude.degrees,
+            sta_lon=self.observer.longitude.degrees,
+            sat_names=[sat_name],
+            sdr=self.autotrack_sdr,
+            samplerate=self.autotrack_samplerate,
+            gain_db=self.autotrack_gain,
+            record=False,
+            out_dir=self.autotrack_out
+        )
+        self.autotrack_seen.clear()
+        self.autotrack_last_images = []
+        self.autotrack_out.mkdir(parents=True, exist_ok=True)
+        self.autotrack_runner = runner
+        self.autotrack_runner.start()
+        self.dec_status.set_text("running (autotrack)")
+
+    def autotrack_stop(self, button):
+        if self.autotrack_runner:
+            self.autotrack_runner.stop()
+            self.autotrack_runner = None
+        self.dec_status.set_text("stopped")
+
     def _compute_satellite_frame_bg(self):
         """Compute scores, telemetry, and map in a background thread.
         Stores results in self._bg_result to be consumed by the UI thread.
@@ -558,7 +703,6 @@ class satelliteapp:
                 positions.append((lat, lon))
 
                 sl_dist = diff.at(t).distance().km
-                # Fast spherical distance (haversine) instead of geopy.geodesic
                 gc_dist = self._haversine_km(obs_lat, obs_lon, lat, lon)
                 rv = diff.at(t).velocity.m_per_s
                 speed = (rv[0]**2 + rv[1]**2 + rv[2]**2)**0.5
@@ -726,6 +870,10 @@ class satelliteapp:
         self.selected_satellite_index = sat_index
         self.current_az, self.current_el = self.preview_satellite_position(sat_index)
         self.update_servo_display()
+        if self.current_mode == "decoder" and hasattr(self, 'dec_status'):
+            # header pulls satellite name on render; force re-render by resetting content
+            self.update_main_content()
+
     
     def update_satellite_position(self):
         if not self.satellites or not self.observer or not self.ts:
@@ -913,24 +1061,23 @@ class satelliteapp:
             status_box = urwid.AttrMap(urwid.LineBox(urwid.Padding(self.status_text, align='center')), 'border')
             map_box = urwid.AttrMap(urwid.LineBox(urwid.Padding(self.map_text, align='center'), title="Equirectangular Projection"), 'border')
             metrics_box = urwid.AttrMap(urwid.LineBox(urwid.Padding(self.metrics_placeholder, align='center'), title="Live Telemetry"), 'border')
-
-            # Make the Satellite Tracker window stretch to full height: keep a compact
-            # status row, and let map + metrics share the remaining space.
             content_pile = urwid.Pile([
                 ('pack', status_box),
                 ('weight', 2, map_box),
                 ('weight', 3, metrics_box),
             ])
-            
             self.info_content = content_pile
-        else:
+            title = "Satellite Tracker"
+        elif self.current_mode == "servo_control":
             self.info_content = self.create_servo_control_widget()
-        
-        self.info_widget = urwid.AttrMap(
-            urwid.LineBox(self.info_content, title=f"{'Satellite Tracker' if self.current_mode == 'satellite_tracking' else 'Servo Control'}"), 
-            'border'
-        )
+            title = "Servo Control"
+        else:
+            self.info_content = self.create_decoder_widget()
+            title = "Decoder"
+
+        self.info_widget = urwid.AttrMap(urwid.LineBox(self.info_content, title=title), 'border')
         self.main_content.original_widget = self.info_widget
+
 
     def show_loading_screen(self, messages, duration=2.0, title="Loading"):
         # Build a single urwid.Text markup list that can accept either a plain string
@@ -1062,6 +1209,24 @@ class satelliteapp:
             self.map_text.set_text(parse_colours(map_display))
             self.metrics_placeholder.original_widget = metrics
         
+                # decoder tab live updates
+        if self.current_mode == "decoder":
+            if self.autotrack_runner and self.autotrack_runner.alive:
+                if self.autotrack_runner.get_new_lines():
+                    self.dec_log.set_text(self.autotrack_runner.tail_text(200))
+
+            new = []
+            if self.autotrack_out.exists():
+                for p in self.autotrack_out.glob("**/*.png"):
+                    if p not in self.autotrack_seen:
+                        self.autotrack_seen.add(p)
+                        new.append(p)
+            if new:
+                self.autotrack_last_images.extend(new)
+                self.autotrack_last_images = self.autotrack_last_images[-12:]
+                names = [f"- {p.name}" for p in reversed(self.autotrack_last_images)]
+                self.dec_imgs.set_text("\n".join(names))
+
         if self.running:
             self.loop.set_alarm_in(self.update_interval, lambda loop, data: self.update_display())
     
@@ -1072,11 +1237,14 @@ class satelliteapp:
         
         sat_tracking_btn = urwid.AttrMap(urwid.Button("Satellite Tracking", on_press=self.switch_mode, user_data="satellite_tracking"), 'button', 'button_focus')
         servo_control_btn = urwid.AttrMap(urwid.Button("Servo Control", on_press=self.switch_mode, user_data="servo_control"), 'button', 'button_focus')
-        
+        decoder_btn = urwid.AttrMap(urwid.Button("Decoder", on_press=self.switch_mode, user_data="decoder"), 'button', 'button_focus')
+
         self.options_listbox = urwid.ListBox(urwid.SimpleListWalker([
             sat_tracking_btn,
             urwid.Divider(),
             servo_control_btn,
+            urwid.Divider(),
+            decoder_btn,
         ]))
         
         options_content = urwid.Pile([
