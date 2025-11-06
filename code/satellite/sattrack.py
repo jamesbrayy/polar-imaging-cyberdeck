@@ -896,14 +896,32 @@ class satelliteapp:
         self.main_content.original_widget = self.info_widget
 
     def show_loading_screen(self, messages, duration=2.0, title="Loading"):
-        parts = []
+        # Build a single urwid.Text markup list that can accept either a plain string
+        # title, a string with markup tags, or an already-parsed markup list/tuples.
+        segments = []
         if title:
-            parts.append(f"[green]{title}[/green]")
+            if isinstance(title, (list, tuple)):
+                segments.extend(title)
+            elif isinstance(title, str):
+                if '[' in title and ']' in title:
+                    segments.extend(parse_colours(title))
+                else:
+                    segments.extend(parse_colours(f"[green]{title}[/green]"))
+            else:
+                segments.extend(parse_colours(f"[green]{str(title)}[/green]"))
+
         if messages:
-            parts.extend(messages)
-        text = urwid.Text(parse_colours("\n\n".join(parts)), align='center')
-        text = urwid.AttrMap(text, 'green')
-        box = urwid.LineBox(urwid.Padding(text, left=2, right=2))
+            if segments:
+                segments.append("\n\n")
+            for i, m in enumerate(messages):
+                if i > 0:
+                    segments.append("\n\n")
+                segments.extend(parse_colours(m))
+
+        text_widget = urwid.Text(segments or "", align='center')
+        # Default to green text if no explicit colour was supplied in segments
+        text_widget = urwid.AttrMap(text_widget, 'green')
+        box = urwid.LineBox(urwid.Padding(text_widget, left=2, right=2))
         box = urwid.AttrMap(box, 'border')
         top = urwid.Padding(urwid.Filler(box, valign='middle'), align='center', width=('relative', 70))
         background = urwid.AttrMap(urwid.SolidFill(' '), 'black')
@@ -931,12 +949,17 @@ class satelliteapp:
             finally:
                 messages_holder["done"] = True
 
-        # UI elements
-        header = urwid.Text(parse_colours(f"[green]{title}[/green]"), align='center')
+        # UI elements (title can be plain string, string with markup, or parsed list)
+        if isinstance(title, (list, tuple)):
+            header_text = urwid.Text(title, align='center')
+        elif isinstance(title, str) and ('[' in title and ']' in title):
+            header_text = urwid.Text(parse_colours(title), align='center')
+        else:
+            header_text = urwid.Text(parse_colours(f"[green]{title}[/green]"), align='center')
         spinner_text = urwid.Text(".", align='center')
         spinner = urwid.AttrMap(spinner_text, 'green')
         body = urwid.Pile([
-            ('pack', header),
+            ('pack', header_text),
             ('pack', urwid.Divider()),
             ('pack', spinner),
         ])
@@ -1074,7 +1097,7 @@ class satelliteapp:
             self.show_loading_screen(["[red]No satellites found[/red]"], duration=5.0, title="")
             return
         # Block until the first map/telemetry frame is computed
-        self.show_loading_task(lambda: (self._compute_satellite_frame_bg() or ["[white]Map ready[/white]"]), title=parse_colours("[white]Preparing map[/white]"))
+        self.show_loading_task(lambda: (self._compute_satellite_frame_bg() or ["[green]Map ready[/green]"]), title=parse_colours("[white]Preparing map[/white]"))
         self.running = True
         self.loop = urwid.MainLoop(self.create_main_widget(), palette=palette, unhandled_input=self.unhandled_input)
         self.loop.set_alarm_in(self.update_interval, lambda loop, data: self.update_display())
