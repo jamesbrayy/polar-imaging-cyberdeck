@@ -7,29 +7,25 @@ import urwid
 from rich.prompt import Prompt
 from rich.console import Console
 
-# satdump integration is unused here; removed to reduce dependencies
-
 try:
     from gpiozero import AngularServo
     from gpiozero.pins.pigpio import PiGPIOFactory
     GPIO_AVAILABLE = True
 except ImportError:
     GPIO_AVAILABLE = False
-    print("Warning: GPIO libraries not available. Servo control will be simulated.")
 
-# setup
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 console = Console()
+
 tle_url = "https://celestrak.org/NORAD/elements/gp.php?GROUP=weather"
 tle_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "satellites.txt")
 ui_update_interval = float(os.getenv("SATTRACK_UPDATE_INTERVAL", "0.1"))
-# Heavier map/telemetry update cadence separate from UI tick
 map_update_interval = float(os.getenv("SATTRACK_MAP_UPDATE_INTERVAL", "0.5"))
+compute_update_interval = float(os.getenv("SATTRACK_PASS_UPDATE_INTERVAL", "60"))
 map_forecast_points = int(os.getenv("SATTRACK_MAP_POINTS", "30"))
 map_forecast_length = float(os.getenv("SATTRACK_MAP_HORIZON_MIN", "30"))
 max_satellites = int(os.getenv("SATTRACK_max_satellites", "8"))
-# How often to recompute expensive next-pass predictions per satellite (seconds)
-PASS_UPDATE_INTERVAL = float(os.getenv("SATTRACK_PASS_UPDATE_INTERVAL", "60"))
+
 colourlist = ["white", "cyan", "dark_blue", "dark_gray", "blue", "magenta", "red", "yellow"]
 palette = [
     ("black", "black", ""), ("dark_red", "dark red", ""), ("dark_green", "dark green", ""),
@@ -42,7 +38,7 @@ palette = [
     ("slider_focus", "white", "dark green")
 ]
 
-ascii_map = [  # this ascii map is composed of braille characters and forms an equirectangular projection of the earth in terminal
+ascii_map = [
         list("⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⢀⣀⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀"),
         list("⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⣠⣄⢠⣤⣤⣶⣾⣿⣿⣿⣿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠛⠂⠀⠀⠀⠀⠀⠀⢶⣶⡶⡶⠆⠀⠀⠀⠀⠐⠒⠀⠒⠒⣒⣀⡀⠀⠀⠀⠀⠀⠲⢶⢶⣤⣄⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀"),
         list("⠄⠀⠀⠀⢀⣀⣀⣀⣀⣀⡀⠀⠀⢀⣀⣶⡾⣿⣿⣯⣿⣹⣿⣿⡟⣿⣿⣿⣶⣤⣄⡀⠀⠉⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣀⡀⠀⠀⠀⠀⠀⠰⠾⢋⠉⢡⣴⣤⣤⣴⣶⣿⣿⣿⣿⣿⣿⣿⣷⣶⣦⣶⣦⣠⣤⣭⣿⣥⣥⣀⣀⡀⠀⢀⢀⣀⠀"),
@@ -521,7 +517,7 @@ class satelliteapp:
         self.servo_controller = servo_controller()
         self.update_interval = ui_update_interval
         self.map_update_interval = map_update_interval
-        self.pass_update_interval = PASS_UPDATE_INTERVAL
+        self.pass_update_interval = compute_update_interval
 
         # Background compute cache/state
         self._bg_computing = False
@@ -1095,14 +1091,6 @@ class satelliteapp:
                     self.loop.screen.stop()
             except Exception:
                 pass
-            # Fallback: OS-level terminal clear
-            try:
-                if os.name == 'nt':
-                    os.system('cls')
-                else:
-                    os.system('clear')
-            except Exception:
-                pass
 
 def get_user_input_ui():
     default_names = "Meteor"
@@ -1111,14 +1099,13 @@ def get_user_input_ui():
     title = urwid.Text("Satellite Tracker Setup", align='center')
     subtitle = urwid.Text("Enter targets and observer location", align='center')
 
-    names_caption = parse_colours("Satellites (comma-separated) [gray](Meteor)[/gray]: ")
-    coords_caption = parse_colours("Observer lat lon [gray](-31.9505 115.8605)[/gray]: ")
+    names_caption = parse_colours(f"Satellites (comma-separated) [white]({default_names})[/white]: ")
+    coords_caption = parse_colours(f"Observer lat lon [white]({default_coords})[/white]: ")
     names_edit = urwid.Edit(names_caption, "")
     coords_edit = urwid.Edit(coords_caption, "")
     fetch_checkbox = urwid.CheckBox("Fetch fresh TLEs", state=False)
 
     message_text = urwid.Text("", align='center')
-    # We no longer perform network fetching here to keep the transition instant
 
     result = {"names": None, "coords": None, "cancel": False, "fetch": False}
 
@@ -1143,7 +1130,6 @@ def get_user_input_ui():
                 message_text.set_text(parse_colours("[bright_red]Enter coordinates as 'lat lon' (e.g. -31.95 115.86)[/bright_red]"))
                 return
 
-        # Record whether we should fetch TLEs after leaving the setup UI
         result["fetch"] = bool(fetch_checkbox.get_state())
         result["names"], result["coords"] = names, coords_raw
         raise urwid.ExitMainLoop()
@@ -1179,7 +1165,6 @@ if __name__ == "__main__":
     names, coords, fetch_requested = get_user_input_ui()
     if names and coords:
         app = satelliteapp()
-        # Immediately show a blocking overlay while we fetch, so transition feels instant
         if fetch_requested:
             msgs = app.show_loading_task(
                 lambda: (
@@ -1197,9 +1182,7 @@ if __name__ == "__main__":
             if msgs:
                 app.show_loading_screen(msgs, duration=2.0, title="TLE/Network Messages")
         else:
-            # Indicate we are using local TLEs
-            app.show_loading_screen(["[bright_cyan]Using local TLE file[/bright_cyan]"], duration=1.2, title="")
+            app.show_loading_screen(["[white]Using local TLE file[/white]"], duration=1.2, title="")
 
-        app.show_loading_screen(["[bright_cyan]Starting satellite tracker. Press 'q' to quit.[/bright_cyan]"], duration=1.0, title="")
+        app.show_loading_screen(["[white]Starting satellite tracker. Press 'q' to quit.[/white]"], duration=1.0, title="")
         app.run(names, coords)
-
