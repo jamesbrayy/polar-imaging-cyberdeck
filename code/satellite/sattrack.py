@@ -988,26 +988,26 @@ class satelliteapp:
             total_pages = (len(self.satellites) + 4) // 5
             self.current_sat_page = self.current_sat_page % total_pages
 
-        def toggle_auto_tracking(self, button):
-            self.auto_tracking_enabled = not self.auto_tracking_enabled
-            # track state edge for update loop
-            prev = self._auto_prev
-            self._auto_prev = self.auto_tracking_enabled
+    def toggle_auto_tracking(self, button):
+        self.auto_tracking_enabled = not self.auto_tracking_enabled
+        # track state edge for update loop
+        prev = self._auto_prev
+        self._auto_prev = self.auto_tracking_enabled
 
-            # if just enabled and we have a locked target, glide once to its current position
-            if self.auto_tracking_enabled and self.tracking_locked and self.locked_satellite_index is not None and self.satellites:
-                idx = min(self.locked_satellite_index, len(self.satellites)-1)
-                now = datetime.now(timezone.utc)
-                t = self.ts.from_datetime(now)
-                diff = self.satellites[idx] - self.observer
-                el, az, _ = diff.at(t).altaz()
-                self.current_az = az.degrees
-                self.current_el = el.degrees
-                g_az, g_el = satellite_to_servo_coords(self.current_az, self.current_el)
-                self._start_glide_to(g_az, g_el, seconds=2.0, steps=80)
-                self.last_tracked_index = idx
+        # if just enabled and we have a locked target, glide once to its current position
+        if self.auto_tracking_enabled and self.tracking_locked and self.locked_satellite_index is not None and self.satellites:
+            idx = min(self.locked_satellite_index, len(self.satellites)-1)
+            now = datetime.now(timezone.utc)
+            t = self.ts.from_datetime(now)
+            diff = self.satellites[idx] - self.observer
+            el, az, _ = diff.at(t).altaz()
+            self.current_az = az.degrees
+            self.current_el = el.degrees
+            g_az, g_el = satellite_to_servo_coords(self.current_az, self.current_el)
+            self._start_glide_to(g_az, g_el, seconds=2.0, steps=80)
+            self.last_tracked_index = idx
 
-            self.update_servo_display()
+        self.update_servo_display()
     
     def select_satellite(self, button, sat_index):
         # cannot change lock while auto track is enabled
@@ -1041,21 +1041,42 @@ class satelliteapp:
             self.selected_satellite_index = 0
 
         try:
-            # choose index for tracking vs preview
-            if self.auto_tracking_enabled and self.tracking_locked and self.locked_satellite_index is not None:
-                idx = self.locked_satellite_index
-                sat = self.satellites[idx]
-                now = datetime.now(timezone.utc)
-                t = self.ts.from_datetime(now)
-                diff = sat - self.observer
-                el, az, _ = diff.at(t).altaz()
+            # only track when autotrack is enabled AND a satellite is locked
+            if not (self.auto_tracking_enabled and self.tracking_locked and self.locked_satellite_index is not None):
+                # not in auto-locked mode; do not move servos or sliders
+                self._auto_prev = False
+                self.last_tracked_index = None
+                return
 
-                # update display to locked values
-                self.current_az = az.degrees
-                self.current_el = el.degrees
+            idx = self.locked_satellite_index
+            if not (0 <= idx < len(self.satellites)):
+                return
 
-                # drive servos and sliders only in auto mode, locked
-                servo_az, servo_el = satellite_to_servo_coords(self.current_az, self.current_el)
+            sat = self.satellites[idx]
+            now = datetime.now(timezone.utc)
+            t = self.ts.from_datetime(now)
+            diff = sat - self.observer
+            el, az, _ = diff.at(t).altaz()
+
+            # update displayed az/el to the locked target
+            self.current_az = az.degrees
+            self.current_el = el.degrees
+
+            # convert to servo coordinates
+            servo_az, servo_el = satellite_to_servo_coords(self.current_az, self.current_el)
+
+            # detect autonomous jump (autotrack just enabled or target changed)
+            jump = (self.last_tracked_index != idx) or (not self._auto_prev and self.auto_tracking_enabled)
+
+            # remember for next tick
+            self._auto_prev = self.auto_tracking_enabled
+            self.last_tracked_index = idx
+
+            if jump:
+                # glide once to the new target position
+                self._start_glide_to(servo_az, servo_el, seconds=2.0, steps=80)
+            else:
+                # regular tracking updates (small deltas), no glide
                 if self.current_el > 0 and servo_el >= -70:
                     self.servo_controller.set_azimuth(servo_az)
                     self.servo_controller.set_elevation(servo_el)
@@ -1064,35 +1085,12 @@ class satelliteapp:
                     if hasattr(self, 'el_slider_widget'):
                         self.el_slider_widget.set_value(servo_el)
                 else:
+                    # park elevation safely if below horizon
                     self.servo_controller.set_elevation(0)
                     if hasattr(self, 'el_slider_widget'):
                         self.el_slider_widget.set_value(0)
-            else:
-                # not auto-tracking locked: do not move servos or sliders
-                # keep preview text responsive to hover (already handled in preview_satellite)
-                pass
 
         except Exception:
-            self.current_az = 0.0
-            self.current_el = 0.0
-
-            if self.auto_tracking_enabled:  # convert to servo coordinate system
-                servo_az, servo_el = satellite_to_servo_coords(self.current_az, self.current_el)
-
-                if self.current_el > 0 and servo_el >= -70:
-                    self.servo_controller.set_azimuth(servo_az)
-                    self.servo_controller.set_elevation(servo_el)
-
-                    if hasattr(self, 'az_slider_widget'):
-                        self.az_slider_widget.set_value(servo_az)
-                    if hasattr(self, 'el_slider_widget'):
-                        self.el_slider_widget.set_value(servo_el)
-                else:
-                    self.servo_controller.set_elevation(0)
-                    if hasattr(self, 'el_slider_widget'):
-                        self.el_slider_widget.set_value(0)
-                        
-        except Exception as e:
             self.current_az = 0.0
             self.current_el = 0.0
 
