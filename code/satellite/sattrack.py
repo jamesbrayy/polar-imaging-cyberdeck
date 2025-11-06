@@ -80,14 +80,9 @@ class SatellitePreviewButton(urwid.Button):
         if key == 'enter':
             self.select_callback(self, self.sat_index)
             return None
-        else:
-            if key in ('up', 'down'):
-                self.preview_callback(self.sat_index)
-            return super().keypress(size, key)
-    
+        return super().keypress(size, key)
+
     def mouse_event(self, size, event, button, col, row, focus):
-        if focus:
-            self.preview_callback(self.sat_index)
         return super().mouse_event(size, event, button, col, row, focus)
 
 def satellite_to_servo_coords(sat_az, sat_el):
@@ -1012,10 +1007,26 @@ class satelliteapp:
             sat_buttons.append(btn)
 
         if sat_buttons:
-            sat_walker = urwid.SimpleListWalker(sat_buttons)
+            sat_walker = urwid.SimpleFocusListWalker(sat_buttons)
+
+            # preview on current focus (keyboard or mouse)
+            _orig_set_focus = sat_walker.set_focus
+            def _set_focus_and_preview(pos):
+                _orig_set_focus(pos)
+                # update hover index and preview to match the newly focused item
+                self.hover_satellite_index = pos
+                self.current_az, self.current_el = self.preview_satellite_position(pos)
+                self.update_servo_display()
+            sat_walker.set_focus = _set_focus_and_preview
+
+            # ensure initial focus shows the correct preview
+            if len(sat_walker):
+                sat_walker.set_focus(0)
+
             sat_listbox = urwid.BoxAdapter(urwid.ListBox(sat_walker), height=6)
         else:
             sat_listbox = urwid.Text("No satellites available", align='center')
+
 
         auto_pile = urwid.Pile([
             ('pack', urwid.Divider()),
