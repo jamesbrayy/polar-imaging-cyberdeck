@@ -351,15 +351,10 @@ class LabeledSlider(urwid.Pile):
             self.callback(value)
 
     def _glide_to(self, target=0.0, seconds=3.0, steps=60):
-        """
-        smoothly move the slider to `target` in small steps over `seconds`,
-        calling the callback each step so servos move gently.
-        """
         import threading, time
         start = self.slider.current_val
         delta = target - start
         if steps <= 0 or seconds <= 0 or abs(delta) < 1e-9:
-            # snap if nothing to do
             self.set_value(target)
             if self.callback:
                 self.callback(target)
@@ -369,17 +364,19 @@ class LabeledSlider(urwid.Pile):
         def runner():
             for i in range(1, steps + 1):
                 v = start + delta * (i / float(steps))
-                # update both the widget text and downstream servo callback
-                self.slider.current_val = v
+                # update the actual slider widget so it visibly moves
+                self.slider.set_value(v)
+                # keep the text synced
                 self.value_text.set_text(f"{v:.3f} deg")
+                # drive the servo callback gently
                 if self.callback:
                     try:
                         self.callback(v)
                     except Exception:
                         pass
                 time.sleep(step_dt)
-            # ensure exact target at the end
-            self.slider.current_val = target
+            # snap to exact target at the end
+            self.slider.set_value(target)
             self.value_text.set_text(f"{target:.3f} deg")
             if self.callback:
                 try:
