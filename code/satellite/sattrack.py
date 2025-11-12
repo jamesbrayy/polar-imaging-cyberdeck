@@ -38,6 +38,18 @@ palette = [
     ("slider_focus", "white", "dark green")
 ]
 
+def parse_colours(s):
+    result = []
+    pos = 0
+    for match in re.finditer(r'\[(\w+)\](.*?)\[/\1\]', s):
+        if match.start() > pos:
+            result.append(s[pos:match.start()])
+        result.append((match.group(1), match.group(2)))
+        pos = match.end()
+    if pos < len(s):
+        result.append(s[pos:])
+    return result
+
 ascii_map = [
         list("⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⢀⣀⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀"),
         list("⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⣠⣄⢠⣤⣤⣶⣾⣿⣿⣿⣿⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠛⠂⠀⠀⠀⠀⠀⠀⢶⣶⡶⡶⠆⠀⠀⠀⠀⠐⠒⠀⠒⠒⣒⣀⡀⠀⠀⠀⠀⠀⠲⢶⢶⣤⣄⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀"),
@@ -66,9 +78,8 @@ ascii_map = [
         list("⣷⣶⣶⣶⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣾⣾⣶⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿"),
         list("⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿")
 ]
-
 h, w = len(ascii_map), len(ascii_map[0])
-    
+
 class SatellitePreviewButton(urwid.Button):
     def __init__(self, label, preview_callback, select_callback, sat_index):
         super().__init__(label)
@@ -86,60 +97,36 @@ class SatellitePreviewButton(urwid.Button):
         return super().mouse_event(size, event, button, col, row, focus)
 
 def satellite_to_servo_coords(sat_az, sat_el):
-    """
-    Convert skyfield az (deg) and alt (deg) into logical servo az/el.
-    Conventions enforced:
-      - input sat_az, sat_el are skyfield-style (az measured from north clockwise,
-        alt is elevation above horizon).
-      - returned servo_az: 0 = north, + = east, - = west, normalized to (-180,180]
-      - returned servo_el: 0 = zenith, + = toward north horizon, - = toward south horizon,
-        clamped to [-90, 90]
-    Returns: (servo_az_deg, servo_el_deg, flipped_bool)
-    flipped_bool indicates 180-degree roll (flip) was used to keep az within AZ_MIN..AZ_MAX.
-    """
     import math
 
-    # safety limits (adjust to your hardware)
     AZ_MIN, AZ_MAX = -135.0, 135.0
     EL_MIN, EL_MAX = -90.0, 90.0
 
     def normalize_angle_deg(a):
         return ((a + 180.0) % 360.0) - 180.0
 
-    # convert inputs to radians
     az_rad = math.radians(float(sat_az))
     alt_rad = math.radians(float(sat_el))
 
-    # build ENU unit vector from skyfield az/alt (skyfield az: 0=north, +east clockwise)
-    # east component
     east = math.cos(alt_rad) * math.sin(az_rad)
-    # north component
     north = math.cos(alt_rad) * math.cos(az_rad)
-    # up component
     up = math.sin(alt_rad)
 
-    # compute az from the vector robustly: atan2(east, north) -> 0 = north, +east positive
     az_from_vector = math.degrees(math.atan2(east, north))
     az_from_vector = normalize_angle_deg(az_from_vector)
 
-    # compute signed elevation per your requested convention:
-    # angular distance from zenith:
-    ang_from_zenith_rad = math.acos(max(-1.0, min(1.0, up)))   # 0..pi
-    ang_from_zenith_deg = math.degrees(ang_from_zenith_rad)    # 0..180
-    # sign comes from north component: north>0 => positive (toward northern horizon)
+    ang_from_zenith_rad = math.acos(max(-1.0, min(1.0, up)))
+    ang_from_zenith_deg = math.degrees(ang_from_zenith_rad)
     if abs(north) > 1e-9:
         sign_north = math.copysign(1.0, north)
     else:
-        # tie-breaker when north ~ 0: use sign of cos(az_rad) fallback
         sign_north = math.copysign(1.0, math.cos(az_rad))
     signed_el = ang_from_zenith_deg * sign_north
-    # clamp to sensible range
-    if signed_el > 90.0:
-        signed_el = 90.0
-    if signed_el < -90.0:
-        signed_el = -90.0
+    if signed_el > 75.0:
+        signed_el = 75.0
+    if signed_el < -75.0:
+        signed_el = -75.0
 
-    # candidate mapping (direct)
     servo_az = az_from_vector
     servo_el = signed_el
 
@@ -149,9 +136,7 @@ def satellite_to_servo_coords(sat_az, sat_el):
     if feasible(servo_az, servo_el):
         return servo_az, servo_el, False
 
-    # try the 180-degree roll (flip) trick
     az2_deg = normalize_angle_deg(az_from_vector + 180.0)
-    # flipping does not change altitude 'up', but north/east signs change relative to az:
     az2_rad = math.radians(az2_deg)
     east2 = math.cos(alt_rad) * math.sin(az2_rad)
     north2 = math.cos(alt_rad) * math.cos(az2_rad)
@@ -165,17 +150,16 @@ def satellite_to_servo_coords(sat_az, sat_el):
     else:
         sign_n2 = math.copysign(1.0, math.cos(az2_rad))
     signed_el2 = ang2 * sign_n2
-    if signed_el2 > 90.0:
-        signed_el2 = 90.0
-    if signed_el2 < -90.0:
-        signed_el2 = -90.0
+    if signed_el2 > 75.0:
+        signed_el2 = 75.0
+    if signed_el2 < -75.0:
+        signed_el2 = -75.0
 
     servo_az2 = az_from_vector2
     servo_el2 = signed_el2
     if feasible(servo_az2, servo_el2):
         return servo_az2, servo_el2, True
 
-    # neither mapping fits perfectly: pick the mapping that needs least clamping
     def clamp_cost(azv, elv):
         azc = max(AZ_MIN, min(AZ_MAX, azv))
         elc = max(EL_MIN, min(EL_MAX, elv))
@@ -227,23 +211,15 @@ class servo_controller:
             self.hardware_available = False
     
     def set_azimuth(self, angle):
-        """
-        Store logical azimuth (0=north, +east, -west) but send the inverted value
-        to the physical servo so physical rotation direction matches logical +Az.
-        """
-        # enforce logical limits
         if not (-135 <= angle <= 135):
             return False
 
-        # keep logical value for the rest of the app
         self.azimuth_angle = float(angle)
 
-        # hardware expects the opposite sign for clockwise movement -> send -angle
         hw_angle = -float(angle)
 
         if self.hardware_available:
             try:
-                # clamp hardware value just in case (AngularServo expects same units)
                 hw_angle = max(-135.0, min(135.0, hw_angle))
                 self.azimuth_servo.angle = hw_angle
             except Exception as e:
@@ -496,18 +472,6 @@ class LabeledSlider(urwid.Pile):
     def selectable(self):
         return True
 
-def parse_colours(s):
-    result = []
-    pos = 0
-    for match in re.finditer(r'\[(\w+)\](.*?)\[/\1\]', s):
-        if match.start() > pos:
-            result.append(s[pos:match.start()])
-        result.append((match.group(1), match.group(2)))
-        pos = match.end()
-    if pos < len(s):
-        result.append(s[pos:])
-    return result
-
 def check_connection():
     try:
         requests.get("https://www.google.com", timeout=5, verify=False)
@@ -562,10 +526,9 @@ def get_satellites(names):
     ]
     return sats[:8], messages
 
-def sigmoid(x):
-    return 1 / (1 + np.exp(-x))
-
 def select_best_satellite(satellites, observer, ts):
+    def sigmoid(x):
+        return 1 / (1 + np.exp(-x))
     now = datetime.now(timezone.utc)
     t_now = ts.utc(now)
     future_times = ts.utc([now + timedelta(seconds=i * 30) for i in range(10)])
@@ -1066,16 +1029,13 @@ class satelliteapp:
             now = datetime.now(timezone.utc)
             t = self.ts.from_datetime(now)
             diff = self.satellites[idx] - self.observer
-            el_sf, az_sf, _ = diff.at(t).altaz()   # skyfield returns (alt, az, distance)
-            # skyfield altaz returns altitude, azimuth in degrees matching 0=north, +east
+            el_sf, az_sf, _ = diff.at(t).altaz()
             self.current_az = az_sf.degrees
             self.current_el = el_sf.degrees
             g_az, g_el, flipped = satellite_to_servo_coords(self.current_az, self.current_el)
             self._start_glide_to(g_az, g_el, seconds=2.0)
             self.last_tracked_index = idx
             self.last_tracked_flipped = bool(flipped)
-
-
 
         self.update_servo_display()
     
@@ -1126,16 +1086,9 @@ class satelliteapp:
             self.current_az = az.degrees
             self.current_el = el.degrees
 
-            # determine servo coords and whether flip mapping is used
             servo_az, servo_el, flipped = satellite_to_servo_coords(self.current_az, self.current_el)
-
-            # detect autonomous jump:
-            # - new locked index
-            # - autotrack just enabled
-            # - flip state changed (requires swing and glide)
             jump = (self.last_tracked_index != idx) or (not self._auto_prev and self.auto_tracking_enabled) or (self.last_tracked_flipped != bool(flipped))
 
-            # remember for next tick
             self._auto_prev = self.auto_tracking_enabled
             self.last_tracked_index = idx
             self.last_tracked_flipped = bool(flipped)
