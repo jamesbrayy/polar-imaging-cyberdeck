@@ -88,92 +88,94 @@ class SatellitePreviewButton(urwid.Button):
 def satellite_to_servo_coords(sat_az, sat_el):
     """
     Convert skyfield az (deg) and alt (deg) into logical servo az/el.
-
-    Conventions:
-      - sat_az:  0 = north, +90 = east, -90 = west (skyfield-style)
-      - sat_el:  computed so that 0 = zenith, +90 = north horizon, -90 = south horizon
-    Returns:
-      (servo_az_deg, servo_el_deg, flipped_bool)
-    where flipped_bool indicates whether the 180-degree roll trick was used.
+    Conventions enforced:
+      - input sat_az, sat_el are skyfield-style (az measured from north clockwise,
+        alt is elevation above horizon).
+      - returned servo_az: 0 = north, + = east, - = west, normalized to (-180,180]
+      - returned servo_el: 0 = zenith, + = toward north horizon, - = toward south horizon,
+        clamped to [-90, 90]
+    Returns: (servo_az_deg, servo_el_deg, flipped_bool)
+    flipped_bool indicates 180-degree roll (flip) was used to keep az within AZ_MIN..AZ_MAX.
     """
     import math
-    # servo logical limits (tune to your hardware safe limits)
+
+    # safety limits (adjust to your hardware)
     AZ_MIN, AZ_MAX = -135.0, 135.0
-    EL_MIN, EL_MAX = -90.0, 90.0   # allow full signed range here; you clamp later if needed
+    EL_MIN, EL_MAX = -90.0, 90.0
 
     def normalize_angle_deg(a):
-        # normalize to (-180, 180]
         return ((a + 180.0) % 360.0) - 180.0
 
-    # convert to radians for trig
-    az_rad = math.radians(sat_az)
-    alt_rad = math.radians(sat_el)
+    # convert inputs to radians
+    az_rad = math.radians(float(sat_az))
+    alt_rad = math.radians(float(sat_el))
 
-    # build ENU unit vector using skyfield az/alt convention:
-    # east = cos(alt)*sin(az)
-    # north = cos(alt)*cos(az)
-    # up = sin(alt)
+    # build ENU unit vector from skyfield az/alt (skyfield az: 0=north, +east clockwise)
+    # east component
     east = math.cos(alt_rad) * math.sin(az_rad)
+    # north component
     north = math.cos(alt_rad) * math.cos(az_rad)
+    # up component
     up = math.sin(alt_rad)
 
-    # signed elevation definition:
-    #  - 0 deg at zenith (up = 1 -> 0)
-    #  - positive towards northern horizon, negative towards southern horizon
-    #
-    # compute angular distance from zenith in degrees: ang = acos(up) in [0,180]
-    # map to signed range by using sign(north). if north is zero, use sign of cos(az) as fallback.
-    ang_from_zenith_rad = math.acos(max(-1.0, min(1.0, up)))
-    ang_from_zenith_deg = math.degrees(ang_from_zenith_rad)  # 0..180
+    # compute az from the vector robustly: atan2(east, north) -> 0 = north, +east positive
+    az_from_vector = math.degrees(math.atan2(east, north))
+    az_from_vector = normalize_angle_deg(az_from_vector)
 
-    sign_north = 0.0
-    if abs(north) > 1e-6:
+    # compute signed elevation per your requested convention:
+    # angular distance from zenith:
+    ang_from_zenith_rad = math.acos(max(-1.0, min(1.0, up)))   # 0..pi
+    ang_from_zenith_deg = math.degrees(ang_from_zenith_rad)    # 0..180
+    # sign comes from north component: north>0 => positive (toward northern horizon)
+    if abs(north) > 1e-9:
         sign_north = math.copysign(1.0, north)
     else:
-        # when north ~ 0 (sat on east/west meridian), derive sign by cos(az) fallback
+        # tie-breaker when north ~ 0: use sign of cos(az_rad) fallback
         sign_north = math.copysign(1.0, math.cos(az_rad))
-
     signed_el = ang_from_zenith_deg * sign_north
-    # clamp signed_el to [-90,90] (beyond 90 is pointing below horizon / under the earth side)
+    # clamp to sensible range
     if signed_el > 90.0:
         signed_el = 90.0
     if signed_el < -90.0:
         signed_el = -90.0
 
-    # For az: use skyfield az directly (0=north, +east), normalize to [-180,180]
-    az_norm = normalize_angle_deg(sat_az)
+    # candidate mapping (direct)
+    servo_az = az_from_vector
+    servo_el = signed_el
 
-    # helper to test mapping feasibility
     def feasible(a_az, a_el):
         return (AZ_MIN <= a_az <= AZ_MAX) and (EL_MIN <= a_el <= EL_MAX)
 
-    # try direct mapping
-    servo_az = az_norm
-    servo_el = signed_el
     if feasible(servo_az, servo_el):
         return servo_az, servo_el, False
 
-    # try flipped mapping (180-degree roll trick)
-    az2 = normalize_angle_deg(sat_az + 180.0)
-    # recompute signed elevation for the flipped az (we must recompute north/east/up)
-    az2_rad = math.radians(az2)
+    # try the 180-degree roll (flip) trick
+    az2_deg = normalize_angle_deg(az_from_vector + 180.0)
+    # flipping does not change altitude 'up', but north/east signs change relative to az:
+    az2_rad = math.radians(az2_deg)
     east2 = math.cos(alt_rad) * math.sin(az2_rad)
     north2 = math.cos(alt_rad) * math.cos(az2_rad)
-    up2 = up  # same alt
+    up2 = up
+    az_from_vector2 = math.degrees(math.atan2(east2, north2))
+    az_from_vector2 = normalize_angle_deg(az_from_vector2)
+
     ang2 = math.degrees(math.acos(max(-1.0, min(1.0, up2))))
-    sign_north2 = math.copysign(1.0, north2) if abs(north2) > 1e-6 else math.copysign(1.0, math.cos(az2_rad))
-    signed_el2 = ang2 * sign_north2
+    if abs(north2) > 1e-9:
+        sign_n2 = math.copysign(1.0, north2)
+    else:
+        sign_n2 = math.copysign(1.0, math.cos(az2_rad))
+    signed_el2 = ang2 * sign_n2
     if signed_el2 > 90.0:
         signed_el2 = 90.0
     if signed_el2 < -90.0:
         signed_el2 = -90.0
 
-    servo_az2 = az2
+    servo_az2 = az_from_vector2
     servo_el2 = signed_el2
     if feasible(servo_az2, servo_el2):
         return servo_az2, servo_el2, True
 
-    # neither fits exactly: choose mapping that requires least clamping
+    # neither mapping fits perfectly: pick the mapping that needs least clamping
     def clamp_cost(azv, elv):
         azc = max(AZ_MIN, min(AZ_MAX, azv))
         elc = max(EL_MIN, min(EL_MAX, elv))
@@ -234,14 +236,11 @@ class servo_controller:
             self.azimuth_angle = angle
             if self.hardware_available:
                 try:
-                    # send the logical angle directly to the servo
                     self.azimuth_servo.angle = float(angle)
                 except Exception as e:
                     print(f"Error setting azimuth: {e}")
             return True
         return False
-
-
     
     def set_elevation(self, angle):
         if -90 <= angle <= 90:
