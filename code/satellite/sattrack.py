@@ -228,19 +228,27 @@ class servo_controller:
     
     def set_azimuth(self, angle):
         """
-        Store logical azimuth and send it directly to the physical servo.
-        angle expected in degrees in the same logical frame used by satellite_to_servo_coords:
-        0 = north, + = east, - = west
+        Store logical azimuth (0=north, +east, -west) but send the inverted value
+        to the physical servo so physical rotation direction matches logical +Az.
         """
-        if -135 <= angle <= 135:
-            self.azimuth_angle = angle
-            if self.hardware_available:
-                try:
-                    self.azimuth_servo.angle = float(angle)
-                except Exception as e:
-                    print(f"Error setting azimuth: {e}")
-            return True
-        return False
+        # enforce logical limits
+        if not (-135 <= angle <= 135):
+            return False
+
+        # keep logical value for the rest of the app
+        self.azimuth_angle = float(angle)
+
+        # hardware expects the opposite sign for clockwise movement -> send -angle
+        hw_angle = -float(angle)
+
+        if self.hardware_available:
+            try:
+                # clamp hardware value just in case (AngularServo expects same units)
+                hw_angle = max(-135.0, min(135.0, hw_angle))
+                self.azimuth_servo.angle = hw_angle
+            except Exception as e:
+                print(f"Error setting azimuth: {e}")
+        return True
     
     def set_elevation(self, angle):
         if -90 <= angle <= 90:
