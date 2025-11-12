@@ -86,18 +86,57 @@ class SatellitePreviewButton(urwid.Button):
         return super().mouse_event(size, event, button, col, row, focus)
 
 def satellite_to_servo_coords(sat_az, sat_el):
-    if sat_az > 180:
-        servo_az = sat_az - 360
+    """
+    Map satellite az/el to logical servo az/el and report whether the
+    180-degree roll (flip) mapping was used.
+
+    Returns (servo_az, servo_el, flipped_bool)
+    """
+    # safety limits (match your servo limits)
+    AZ_MIN, AZ_MAX = -135.0, 135.0
+    EL_MIN, EL_MAX = -70.0, 70.0
+
+    def normalize_angle(a):
+        return ((a + 180.0) % 360.0) - 180.0
+
+    def map_to_servo(az_deg, el_deg):
+        azn = normalize_angle(az_deg)
+        servo_az_raw = azn
+        servo_el_raw = el_deg - 90.0
+        return servo_az_raw, servo_el_raw
+
+    # try direct mapping
+    s_az, s_el = map_to_servo(sat_az, sat_el)
+    direct_ok = (AZ_MIN <= s_az <= AZ_MAX) and (EL_MIN <= s_el <= EL_MAX)
+
+    # try flipped mapping (180-roll)
+    az2 = normalize_angle(sat_az + 180.0)
+    el2 = 180.0 - sat_el
+    s2_az, s2_el = map_to_servo(az2, el2)
+    flip_ok = (AZ_MIN <= s2_az <= AZ_MAX) and (EL_MIN <= s2_el <= EL_MAX)
+
+    if direct_ok:
+        return s_az, s_el, False
+    if flip_ok:
+        return s2_az, s2_el, True
+
+    # neither fits exactly: pick the mapping that requires the least clamping
+    def clamp_cost(azv, elv):
+        azc = max(AZ_MIN, min(AZ_MAX, azv))
+        elc = max(EL_MIN, min(EL_MAX, elv))
+        return abs(azv - azc) + abs(elv - elc)
+
+    cost_direct = clamp_cost(s_az, s_el)
+    cost_flip = clamp_cost(s2_az, s2_el)
+
+    if cost_flip < cost_direct:
+        final_az = max(AZ_MIN, min(AZ_MAX, s2_az))
+        final_el = max(EL_MIN, min(EL_MAX, s2_el))
+        return final_az, final_el, True
     else:
-        servo_az = sat_az
-    
-    servo_az = max(-135, min(135, servo_az))
-    
-    servo_el = sat_el - 90
-    
-    servo_el = max(-70, min(70, servo_el))
-    
-    return servo_az, servo_el
+        final_az = max(AZ_MIN, min(AZ_MAX, s_az))
+        final_el = max(EL_MIN, min(EL_MAX, s_el))
+        return final_az, final_el, False
 
 class servo_controller:
     def __init__(self):
@@ -618,29 +657,25 @@ class satelliteapp:
         self.tracking_locked = False
         self.locked_satellite_index = None
         self._glide_state = None
-
+        self.last_tracked_flipped = False
         self._glide_thread = None
         self._glide_gen = 0
         self._auto_prev = False
         self.last_tracked_index = None
-
         self.decoder_ui = None
         self.dec_target_text = None
         self.dec_status = None
         self.dec_log = None
         self.dec_imgs = None
-
         self._bg_computing = False
         self._bg_result = None
         self._last_map_update = 0.0
         self._next_pass_cache = {}
-
         self.auto_tracking_enabled = False
         self.selected_satellite_index = 0
         self.current_az = 0.0
         self.current_el = 0.0
         self.auto_tracking_focused = False
-
         base_dir = Path(os.path.dirname(os.path.abspath(__file__)))
         self.autotrack_cfg = base_dir / "autotrack_runtime.json"
         self.autotrack_out = base_dir / "satdump_out"
@@ -946,7 +981,7 @@ class satelliteapp:
     def cycle_satellite_page(self, direction):
         if len(self.satellites) > 5:
             if direction == 'down':
-                self.current_sat_page += 1
+                self.current_sat_page += 1    
             elif direction == 'up':
                 self.current_sat_page -= 1
             
@@ -966,9 +1001,11 @@ class satelliteapp:
             el, az, _ = diff.at(t).altaz()
             self.current_az = az.degrees
             self.current_el = el.degrees
-            g_az, g_el = satellite_to_servo_coords(self.current_az, self.current_el)
+            g_az, g_el, flipped = satellite_to_servo_coords(self.current_az, self.current_el)
             self._start_glide_to(g_az, g_el, seconds=2.0)
             self.last_tracked_index = idx
+            self.last_tracked_flipped = bool(flipped)
+
 
         self.update_servo_display()
     
@@ -1019,12 +1056,19 @@ class satelliteapp:
             self.current_az = az.degrees
             self.current_el = el.degrees
 
-            servo_az, servo_el = satellite_to_servo_coords(self.current_az, self.current_el)
+            # determine servo coords and whether flip mapping is used
+            servo_az, servo_el, flipped = satellite_to_servo_coords(self.current_az, self.current_el)
 
-            jump = (self.last_tracked_index != idx) or (not self._auto_prev and self.auto_tracking_enabled)
+            # detect autonomous jump:
+            # - new locked index
+            # - autotrack just enabled
+            # - flip state changed (requires swing and glide)
+            jump = (self.last_tracked_index != idx) or (not self._auto_prev and self.auto_tracking_enabled) or (self.last_tracked_flipped != bool(flipped))
 
+            # remember for next tick
             self._auto_prev = self.auto_tracking_enabled
             self.last_tracked_index = idx
+            self.last_tracked_flipped = bool(flipped)
 
             if jump:
                 self._start_glide_to(servo_az, servo_el, seconds=2.0)
