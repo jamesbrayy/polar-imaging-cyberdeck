@@ -87,58 +87,108 @@ class SatellitePreviewButton(urwid.Button):
 
 def satellite_to_servo_coords(sat_az, sat_el):
     """
-    map satellite az/el to logical servo az/el and report whether the
-    180-degree roll (flip) mapping was used.
+    Convert skyfield az (deg) and alt (deg) into logical servo az/el.
 
-    returns (servo_az, servo_el, flipped_bool)
+    Conventions:
+      - sat_az:  0 = north, +90 = east, -90 = west (skyfield-style)
+      - sat_el:  computed so that 0 = zenith, +90 = north horizon, -90 = south horizon
+    Returns:
+      (servo_az_deg, servo_el_deg, flipped_bool)
+    where flipped_bool indicates whether the 180-degree roll trick was used.
     """
-    # invert az sign to correct east/west orientation (0=north, +az=east, -az=west)
-    sat_az = -float(sat_az)
-
-    # safety limits (match your servo limits)
+    import math
+    # servo logical limits (tune to your hardware safe limits)
     AZ_MIN, AZ_MAX = -135.0, 135.0
-    EL_MIN, EL_MAX = -70.0, 70.0
+    EL_MIN, EL_MAX = -90.0, 90.0   # allow full signed range here; you clamp later if needed
 
-    def normalize_angle(a):
+    def normalize_angle_deg(a):
+        # normalize to (-180, 180]
         return ((a + 180.0) % 360.0) - 180.0
 
-    def map_to_servo(az_deg, el_deg):
-        azn = normalize_angle(az_deg)
-        servo_az_raw = azn
-        servo_el_raw = el_deg - 90.0
-        return servo_az_raw, servo_el_raw
+    # convert to radians for trig
+    az_rad = math.radians(sat_az)
+    alt_rad = math.radians(sat_el)
+
+    # build ENU unit vector using skyfield az/alt convention:
+    # east = cos(alt)*sin(az)
+    # north = cos(alt)*cos(az)
+    # up = sin(alt)
+    east = math.cos(alt_rad) * math.sin(az_rad)
+    north = math.cos(alt_rad) * math.cos(az_rad)
+    up = math.sin(alt_rad)
+
+    # signed elevation definition:
+    #  - 0 deg at zenith (up = 1 -> 0)
+    #  - positive towards northern horizon, negative towards southern horizon
+    #
+    # compute angular distance from zenith in degrees: ang = acos(up) in [0,180]
+    # map to signed range by using sign(north). if north is zero, use sign of cos(az) as fallback.
+    ang_from_zenith_rad = math.acos(max(-1.0, min(1.0, up)))
+    ang_from_zenith_deg = math.degrees(ang_from_zenith_rad)  # 0..180
+
+    sign_north = 0.0
+    if abs(north) > 1e-6:
+        sign_north = math.copysign(1.0, north)
+    else:
+        # when north ~ 0 (sat on east/west meridian), derive sign by cos(az) fallback
+        sign_north = math.copysign(1.0, math.cos(az_rad))
+
+    signed_el = ang_from_zenith_deg * sign_north
+    # clamp signed_el to [-90,90] (beyond 90 is pointing below horizon / under the earth side)
+    if signed_el > 90.0:
+        signed_el = 90.0
+    if signed_el < -90.0:
+        signed_el = -90.0
+
+    # For az: use skyfield az directly (0=north, +east), normalize to [-180,180]
+    az_norm = normalize_angle_deg(sat_az)
+
+    # helper to test mapping feasibility
+    def feasible(a_az, a_el):
+        return (AZ_MIN <= a_az <= AZ_MAX) and (EL_MIN <= a_el <= EL_MAX)
 
     # try direct mapping
-    s_az, s_el = map_to_servo(sat_az, sat_el)
-    direct_ok = (AZ_MIN <= s_az <= AZ_MAX) and (EL_MIN <= s_el <= EL_MAX)
+    servo_az = az_norm
+    servo_el = signed_el
+    if feasible(servo_az, servo_el):
+        return servo_az, servo_el, False
 
-    # try flipped mapping (180-roll)
-    az2 = normalize_angle(sat_az + 180.0)
-    el2 = 180.0 - sat_el
-    s2_az, s2_el = map_to_servo(az2, el2)
-    flip_ok = (AZ_MIN <= s2_az <= AZ_MAX) and (EL_MIN <= s2_el <= EL_MAX)
+    # try flipped mapping (180-degree roll trick)
+    az2 = normalize_angle_deg(sat_az + 180.0)
+    # recompute signed elevation for the flipped az (we must recompute north/east/up)
+    az2_rad = math.radians(az2)
+    east2 = math.cos(alt_rad) * math.sin(az2_rad)
+    north2 = math.cos(alt_rad) * math.cos(az2_rad)
+    up2 = up  # same alt
+    ang2 = math.degrees(math.acos(max(-1.0, min(1.0, up2))))
+    sign_north2 = math.copysign(1.0, north2) if abs(north2) > 1e-6 else math.copysign(1.0, math.cos(az2_rad))
+    signed_el2 = ang2 * sign_north2
+    if signed_el2 > 90.0:
+        signed_el2 = 90.0
+    if signed_el2 < -90.0:
+        signed_el2 = -90.0
 
-    if direct_ok:
-        return s_az, s_el, False
-    if flip_ok:
-        return s2_az, s2_el, True
+    servo_az2 = az2
+    servo_el2 = signed_el2
+    if feasible(servo_az2, servo_el2):
+        return servo_az2, servo_el2, True
 
-    # neither fits exactly: pick the mapping that requires the least clamping
+    # neither fits exactly: choose mapping that requires least clamping
     def clamp_cost(azv, elv):
         azc = max(AZ_MIN, min(AZ_MAX, azv))
         elc = max(EL_MIN, min(EL_MAX, elv))
         return abs(azv - azc) + abs(elv - elc)
 
-    cost_direct = clamp_cost(s_az, s_el)
-    cost_flip = clamp_cost(s2_az, s2_el)
+    cost_direct = clamp_cost(servo_az, servo_el)
+    cost_flip = clamp_cost(servo_az2, servo_el2)
 
     if cost_flip < cost_direct:
-        final_az = max(AZ_MIN, min(AZ_MAX, s2_az))
-        final_el = max(EL_MIN, min(EL_MAX, s2_el))
+        final_az = max(AZ_MIN, min(AZ_MAX, servo_az2))
+        final_el = max(EL_MIN, min(EL_MAX, servo_el2))
         return final_az, final_el, True
     else:
-        final_az = max(AZ_MIN, min(AZ_MAX, s_az))
-        final_el = max(EL_MIN, min(EL_MAX, s_el))
+        final_az = max(AZ_MIN, min(AZ_MAX, servo_az))
+        final_el = max(EL_MIN, min(EL_MAX, servo_el))
         return final_az, final_el, False
 
 class servo_controller:
@@ -176,18 +226,21 @@ class servo_controller:
     
     def set_azimuth(self, angle):
         """
-        store logical azimuth and send it directly to the physical servo.
-        (do not invert the sign here — mapping is handled in satellite_to_servo_coords)
+        Store logical azimuth and send it directly to the physical servo.
+        angle expected in degrees in the same logical frame used by satellite_to_servo_coords:
+        0 = north, + = east, - = west
         """
         if -135 <= angle <= 135:
             self.azimuth_angle = angle
             if self.hardware_available:
                 try:
-                    self.azimuth_servo.angle = -float(angle)
+                    # send the logical angle directly to the servo
+                    self.azimuth_servo.angle = float(angle)
                 except Exception as e:
                     print(f"Error setting azimuth: {e}")
             return True
         return False
+
 
     
     def set_elevation(self, angle):
@@ -1006,13 +1059,15 @@ class satelliteapp:
             now = datetime.now(timezone.utc)
             t = self.ts.from_datetime(now)
             diff = self.satellites[idx] - self.observer
-            el, az, _ = diff.at(t).altaz()
-            self.current_az = az.degrees
-            self.current_el = el.degrees
+            el_sf, az_sf, _ = diff.at(t).altaz()   # skyfield returns (alt, az, distance)
+            # skyfield altaz returns altitude, azimuth in degrees matching 0=north, +east
+            self.current_az = az_sf.degrees
+            self.current_el = el_sf.degrees
             g_az, g_el, flipped = satellite_to_servo_coords(self.current_az, self.current_el)
             self._start_glide_to(g_az, g_el, seconds=2.0)
             self.last_tracked_index = idx
             self.last_tracked_flipped = bool(flipped)
+
 
 
         self.update_servo_display()
