@@ -87,11 +87,14 @@ class SatellitePreviewButton(urwid.Button):
 
 def satellite_to_servo_coords(sat_az, sat_el):
     """
-    Map satellite az/el to logical servo az/el and report whether the
+    map satellite az/el to logical servo az/el and report whether the
     180-degree roll (flip) mapping was used.
 
-    Returns (servo_az, servo_el, flipped_bool)
+    returns (servo_az, servo_el, flipped_bool)
     """
+    # invert az sign to correct east/west orientation (0=north, +az=east, -az=west)
+    sat_az = -float(sat_az)
+
     # safety limits (match your servo limits)
     AZ_MIN, AZ_MAX = -135.0, 135.0
     EL_MIN, EL_MAX = -70.0, 70.0
