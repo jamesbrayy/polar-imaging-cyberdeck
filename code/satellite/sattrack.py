@@ -175,6 +175,10 @@ class servo_controller:
             self.hardware_available = False
     
     def set_azimuth(self, angle):
+        """
+        store logical azimuth and send it directly to the physical servo.
+        (do not invert the sign here — mapping is handled in satellite_to_servo_coords)
+        """
         if -135 <= angle <= 135:
             self.azimuth_angle = angle
             if self.hardware_available:
@@ -184,6 +188,7 @@ class servo_controller:
                     print(f"Error setting azimuth: {e}")
             return True
         return False
+
     
     def set_elevation(self, angle):
         if -90 <= angle <= 90:
