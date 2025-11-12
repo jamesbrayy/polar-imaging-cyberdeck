@@ -183,7 +183,7 @@ class servo_controller:
             self.azimuth_angle = angle
             if self.hardware_available:
                 try:
-                    self.azimuth_servo.angle = float(angle)
+                    self.azimuth_servo.angle = -float(angle)
                 except Exception as e:
                     print(f"Error setting azimuth: {e}")
             return True
