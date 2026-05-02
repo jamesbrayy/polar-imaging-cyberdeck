@@ -60,4 +60,5 @@ A portable, fully off-grid system designed to receive and decode weather satelli
 - The antenna rotator and mount is not strictly necessary as the 3D printed helicone dish can be manually aimed at a satellite for reception during a pass
   - This prevents autonomous reception for non-geostationary satellites
 - If I were to redesign this with no budget restrictions I would be sure to replace the servo motors with stepper motors as they are much more suited to this application
-- Designed for educational and hobbyist research applications and submitted for assessment as my final WA ATAR Engineering project
+- Designed for educational and hobbyist research applications
+- Submitted as my West Australian ATAR Engineering Studies project - awarded the 2025 State Subject Exhibition Prize for Engineering Studies
