@@ -2,6 +2,8 @@
 
 A portable, fully off-grid system designed to receive and decode weather satellite imagery from polar-orbiting and geostationary satellites via L-band radio. It allows independent operation in remote locations without reliance on mains power or network infrastructure.
 
+![A photo of the cyberdeck component displaying the current position of satellites.](/images/cyberdeck_actual.JPEG)
+
 ## Features
 
 - Reception of live weather images from multiple satellite types
