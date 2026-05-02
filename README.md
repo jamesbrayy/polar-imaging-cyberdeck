@@ -33,14 +33,14 @@ A portable, fully off-grid system designed to receive and decode weather satelli
 - Image post-processing and storage locally on the Pi (*in progress*)
 - Optional telemetry logging and export for further analysis (*in progress*)
 
-## Assembly Installation
+## Assembly and Installation
 
 1. Assemble antenna and rotator hardware according to schematics
 2. Connect RTL-SDR and Raspberry Pi 4B
-3. Clone repository:
+3. Clone the repository:
    ```bash
    git clone https://github.com/username/polar-imaging-cyberdeck.git
-4. Install Python dependencies:
+4. Install all Python dependencies:
    ```bash
    pip install -r requirements.txt
 
@@ -49,6 +49,11 @@ A portable, fully off-grid system designed to receive and decode weather satelli
 - Run `python3 code/satellite/sattrack.py` from the root directory to start the manual satellite tracking and image capture terminal UI
 - Autonomous reception is currently a work in progress and will be updated and documented upon completion
 - Monitor pass logs and received images either through the UI or the local storage
+
+## CAD Images and Schematic
+![](/images/antenna_cad.jpg)
+![](/images/cyberdeck_cad.jpg)
+![](/images/schematic.png)
 
 ## Notes
 
